@@ -1,0 +1,67 @@
+name: Daily NSE Scan
+
+on:
+  schedule:
+    # 03:30 UTC = 09:00 IST, Monday-Friday
+    - cron: "30 3 * * 1-5"
+    # 11:30 UTC = 17:00 IST, Monday-Friday
+    - cron: "30 11 * * 1-5"
+  push:
+    branches:
+      - main
+
+jobs:
+  run-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Create credentials file from secret
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        run: |
+          if [ -z "$GOOGLE_APPLICATION_CREDENTIALS_JSON" ]; then
+            echo "Missing secret: GOOGLE_APPLICATION_CREDENTIALS_JSON"
+            exit 1
+          fi
+          mkdir -p .github/secrets
+          printf "%s" "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > .github/secrets/google-service-account.json
+
+      - name: Run morning scanner or evening follow-up
+        env:
+          GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
+          GOOGLE_APPLICATION_CREDENTIALS: .github/secrets/google-service-account.json
+        run: |
+          if [ -z "$GOOGLE_SHEET_URL" ]; then
+            echo "Missing secret: GOOGLE_SHEET_URL"
+            exit 1
+          fi
+          if [ "${{ github.event.schedule }}" = "30 11 * * 1-5" ]; then
+            python scripts/evening_followup.py
+          else
+            python main.py --sync-gsheet --plain --watchlist NIFTY500
+          fi
+
+      - name: Upload scan output artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nse-scan-output
+          path: |
+            output/buy_signals.csv
+            output/buy_signals.json
+            logs/scanner.log
+          if-no-files-found: warn
