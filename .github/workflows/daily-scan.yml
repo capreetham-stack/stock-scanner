@@ -10,6 +10,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   run-scan:
     runs-on: ubuntu-latest
@@ -19,17 +22,30 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Prepare runtime folders
+        run: |
+          mkdir -p logs output .github/secrets
+          {
+            echo "Daily NSE Scan workflow started"
+            echo "Event: ${{ github.event_name }}"
+            echo "Schedule: ${{ github.event.schedule || 'n/a' }}"
+            echo "Ref: ${{ github.ref_name }}"
+          } > logs/github-actions.log
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+          cache: pip
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          set -euo pipefail
+          python -m pip install --upgrade pip 2>&1 | tee -a logs/github-actions.log
+          pip install -r requirements.txt 2>&1 | tee -a logs/github-actions.log
+          test ${PIPESTATUS[0]} -eq 0
 
       - name: Create credentials file from secret
         env:
@@ -37,12 +53,13 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$GOOGLE_APPLICATION_CREDENTIALS_JSON" ]; then
+            echo "Missing secret: GOOGLE_APPLICATION_CREDENTIALS_JSON" | tee -a logs/github-actions.log
             echo "Missing secret: GOOGLE_APPLICATION_CREDENTIALS_JSON"
             exit 1
           fi
-          mkdir -p .github/secrets
           printf "%s" "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > .github/secrets/google-service-account.json
-          python -m json.tool .github/secrets/google-service-account.json > /dev/null
+          python -m json.tool .github/secrets/google-service-account.json > /dev/null 2>> logs/github-actions.log
+          echo "Credentials JSON validated successfully" >> logs/github-actions.log
 
       - name: Run morning scanner or evening follow-up
         env:
@@ -50,21 +67,22 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: .github/secrets/google-service-account.json
         run: |
           set -euo pipefail
-          mkdir -p logs output
           if [ -z "$GOOGLE_SHEET_URL" ]; then
+            echo "Missing secret: GOOGLE_SHEET_URL" | tee -a logs/github-actions.log
             echo "Missing secret: GOOGLE_SHEET_URL"
             exit 1
           fi
+          echo "GOOGLE_SHEET_URL is present" >> logs/github-actions.log
           if [ "${{ github.event.schedule }}" = "30 11 * * 1-5" ]; then
-            python scripts/evening_followup.py 2>&1 | tee logs/github-actions.log
+            python scripts/evening_followup.py 2>&1 | tee -a logs/github-actions.log
           else
-            python main.py --sync-gsheet --plain --watchlist NIFTY500 2>&1 | tee logs/github-actions.log
+            python main.py --sync-gsheet --plain --watchlist NIFTY500 2>&1 | tee -a logs/github-actions.log
           fi
           test ${PIPESTATUS[0]} -eq 0
 
       - name: Upload scan output artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: nse-scan-output
           path: |
