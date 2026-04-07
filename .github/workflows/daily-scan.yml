@@ -14,6 +14,8 @@ jobs:
   run-scan:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout
@@ -33,27 +35,32 @@ jobs:
         env:
           GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
         run: |
+          set -euo pipefail
           if [ -z "$GOOGLE_APPLICATION_CREDENTIALS_JSON" ]; then
             echo "Missing secret: GOOGLE_APPLICATION_CREDENTIALS_JSON"
             exit 1
           fi
           mkdir -p .github/secrets
           printf "%s" "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > .github/secrets/google-service-account.json
+          python -m json.tool .github/secrets/google-service-account.json > /dev/null
 
       - name: Run morning scanner or evening follow-up
         env:
           GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
           GOOGLE_APPLICATION_CREDENTIALS: .github/secrets/google-service-account.json
         run: |
+          set -euo pipefail
+          mkdir -p logs output
           if [ -z "$GOOGLE_SHEET_URL" ]; then
             echo "Missing secret: GOOGLE_SHEET_URL"
             exit 1
           fi
           if [ "${{ github.event.schedule }}" = "30 11 * * 1-5" ]; then
-            python scripts/evening_followup.py
+            python scripts/evening_followup.py 2>&1 | tee logs/github-actions.log
           else
-            python main.py --sync-gsheet --plain --watchlist NIFTY500
+            python main.py --sync-gsheet --plain --watchlist NIFTY500 2>&1 | tee logs/github-actions.log
           fi
+          test ${PIPESTATUS[0]} -eq 0
 
       - name: Upload scan output artifacts
         if: always()
@@ -61,6 +68,7 @@ jobs:
         with:
           name: nse-scan-output
           path: |
+            logs/github-actions.log
             output/buy_signals.csv
             output/buy_signals.json
             logs/scanner.log
