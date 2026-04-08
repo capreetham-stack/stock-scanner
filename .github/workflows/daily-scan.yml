@@ -87,6 +87,8 @@ jobs:
           if [ "${{ github.event.schedule }}" = "30 11 * * 1-5" ] || [ "$RUN_TYPE" = "evening" ]; then
             echo "Running evening follow-up..." >> logs/github-actions.log
             python scripts/evening_followup.py 2>&1 | tee -a logs/github-actions.log
+            echo "Appending evening movement section to morning worksheet..." >> logs/github-actions.log
+            python scripts/evening_append_to_morning.py 2>&1 | tee -a logs/github-actions.log
           else
             echo "Running morning scanner..." >> logs/github-actions.log
             python main.py --sync-gsheet --plain --watchlist NIFTY500 2>&1 | tee -a logs/github-actions.log
