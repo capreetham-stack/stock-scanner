@@ -9,6 +9,16 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      run_type:
+        description: "Which scan to run"
+        required: false
+        default: "morning"
+        type: choice
+        options:
+          - morning
+          - evening
 
 permissions:
   contents: read
@@ -73,9 +83,12 @@ jobs:
             exit 1
           fi
           echo "GOOGLE_SHEET_URL is present" >> logs/github-actions.log
-          if [ "${{ github.event.schedule }}" = "30 11 * * 1-5" ]; then
+          RUN_TYPE="${{ github.event.inputs.run_type }}"
+          if [ "${{ github.event.schedule }}" = "30 11 * * 1-5" ] || [ "$RUN_TYPE" = "evening" ]; then
+            echo "Running evening follow-up..." >> logs/github-actions.log
             python scripts/evening_followup.py 2>&1 | tee -a logs/github-actions.log
           else
+            echo "Running morning scanner..." >> logs/github-actions.log
             python main.py --sync-gsheet --plain --watchlist NIFTY500 2>&1 | tee -a logs/github-actions.log
           fi
           test ${PIPESTATUS[0]} -eq 0

@@ -3,9 +3,8 @@
 Create end-of-day follow-up from morning scan tabs.
 
 Reads today's PRE915_* tab from Google Sheets, fetches latest prices,
-writes:
-- EOD_YYYY-MM-DD      : performance of morning picks
-- NEXTDAY_YYYY-MM-DD  : next-day shortlist based on morning score + EOD move
+and writes a single combined worksheet:
+- EOD_NEXTDAY_YYYY-MM-DD
 """
 
 from __future__ import annotations
@@ -84,19 +83,17 @@ def pick_latest_tab(spreadsheet, prefix: str) -> gspread.Worksheet:
     return tabs[-1]
 
 
-def unique_title(spreadsheet, base: str) -> str:
-    existing = {ws.title for ws in spreadsheet.worksheets()}
-    if base not in existing:
-        return base
-    i = 2
-    while f"{base}_{i}" in existing:
-        i += 1
-    return f"{base}_{i}"
+def remove_worksheet_if_exists(spreadsheet, title: str) -> None:
+    for ws in spreadsheet.worksheets():
+        if ws.title == title:
+            spreadsheet.del_worksheet(ws)
+            return
 
 
 def write_rows(spreadsheet, title: str, rows: list[dict[str, Any]]) -> str:
     if not rows:
         return ""
+    remove_worksheet_if_exists(spreadsheet, title)
     headers = list(rows[0].keys())
     values = [headers] + [[rows_i.get(h, "") for h in headers] for rows_i in rows]
     ws = spreadsheet.add_worksheet(title=title, rows=max(100, len(values) + 10), cols=max(20, len(headers) + 2))
@@ -177,7 +174,11 @@ def main() -> None:
         row["Rank"] = rank
         row.pop("_eod_change_sort", None)
 
-    combined_title = unique_title(sh, f"EOD_NEXTDAY_{today}")
+    # Cleanup legacy split tabs from older script versions.
+    remove_worksheet_if_exists(sh, f"EOD_{today}")
+    remove_worksheet_if_exists(sh, f"NEXTDAY_{today}")
+
+    combined_title = f"EOD_NEXTDAY_{today}"
     written_combined = write_rows(sh, combined_title, eod_rows)
 
     summary = {
