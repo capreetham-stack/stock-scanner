@@ -48,6 +48,21 @@ def _score_colour(score: int) -> str:
     return C.DIM
 
 
+def _to_num(value, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return float(value)
+        return float(str(value).replace(",", "").strip())
+    except Exception:
+        return default
+
+
+def _fmt_pct(value: float | None) -> str:
+    return f"{value:+.2f}%" if value is not None else "N/A"
+
+
 # ─── Reporter class ───────────────────────────────────────────────────────────
 
 class Reporter:
@@ -80,6 +95,8 @@ class Reporter:
               f"Scanned: {stats['scanned']}  "
               f"Qualified: {stats['qualified']}  "
               f"Skipped: {stats['skipped']}")
+        for line in self._market_sentiment_lines(result):
+            print(_col(f"  {line}", C.DIM))
 
         if not buy_list:
             print(_col(f"\n  No stocks meet the minimum score ({cfg.MIN_SCORE_TO_BUY} pts). "
@@ -99,6 +116,95 @@ class Reporter:
 
         print(_col("=" * 70, C.CYAN, C.BOLD))
         print()
+
+    def _extract_global_index_pct(self, global_data: dict | list, names: tuple[str, ...]) -> float | None:
+        rows = []
+        if isinstance(global_data, dict):
+            if isinstance(global_data.get("data"), list):
+                rows = global_data.get("data", [])
+            elif isinstance(global_data.get("indices"), list):
+                rows = global_data.get("indices", [])
+        elif isinstance(global_data, list):
+            rows = global_data
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            name = " ".join([
+                str(row.get("index", "")),
+                str(row.get("indexSymbol", "")),
+                str(row.get("key", "")),
+                str(row.get("name", "")),
+                str(row.get("symbol", "")),
+            ]).upper()
+            if not any(n in name for n in names):
+                continue
+            for field in ("perChange", "pChange", "percentChange", "changePercent"):
+                if field in row:
+                    return _to_num(row.get(field), None)
+        return None
+
+    def _market_sentiment_lines(self, result: dict) -> list[str]:
+        """3-5 line market summary: index mood, breadth, EOD flows, outside movers."""
+        ctx = result.get("market_context", {}) or {}
+
+        pcr = ctx.get("nifty_pcr")
+        preopen = ctx.get("preopen_nifty", {}) or {}
+        advances = int(preopen.get("advances", 0) or 0)
+        declines = int(preopen.get("declines", 0) or 0)
+
+        gbl = ctx.get("global", {}) or {}
+        nifty_pct = self._extract_global_index_pct(gbl, ("NIFTY",))
+        sensex_pct = self._extract_global_index_pct(gbl, ("SENSEX", "BSE SENSEX"))
+
+        bullish_votes = 0
+        bearish_votes = 0
+        if nifty_pct is not None:
+            bullish_votes += 1 if nifty_pct > 0 else 0
+            bearish_votes += 1 if nifty_pct < 0 else 0
+        if sensex_pct is not None:
+            bullish_votes += 1 if sensex_pct > 0 else 0
+            bearish_votes += 1 if sensex_pct < 0 else 0
+        if advances > declines:
+            bullish_votes += 1
+        elif declines > advances:
+            bearish_votes += 1
+
+        if bullish_votes > bearish_votes or (pcr is not None and pcr > 1):
+            today = "BULLISH"
+        elif bearish_votes > bullish_votes or (pcr is not None and pcr < 1):
+            today = "BEARISH"
+        else:
+            today = "NEUTRAL"
+
+        fii_dii = ctx.get("fii_dii", []) or []
+        net_sum = 0.0
+        eod_date = "N/A"
+        if isinstance(fii_dii, list) and fii_dii:
+            eod_date = str(fii_dii[0].get("date", "N/A"))
+            for row in fii_dii:
+                if isinstance(row, dict):
+                    net_sum += _to_num(row.get("netValue"), 0.0)
+        eod = "BULLISH" if net_sum > 0 else ("BEARISH" if net_sum < 0 else "NEUTRAL")
+
+        scanned_symbols = {s.symbol for s in result.get("all_signals", []) if getattr(s, "symbol", None)}
+        outside = []
+        for row in preopen.get("data", []) if isinstance(preopen, dict) else []:
+            meta = row.get("metadata", {}) if isinstance(row, dict) else {}
+            sym = str(meta.get("symbol", "")).strip().upper()
+            pchg = _to_num(meta.get("pChange"), 0.0)
+            if sym and sym not in scanned_symbols and pchg > 0:
+                outside.append((sym, pchg))
+
+        outside.sort(key=lambda x: x[1], reverse=True)
+        top_outside = ", ".join([f"{sym} {chg:+.2f}%" for sym, chg in outside[:3]]) if outside else "none"
+
+        return [
+            f"Market sentiment (Today): {today}",
+            f"Indices: NIFTY {_fmt_pct(nifty_pct)} | SENSEX {_fmt_pct(sensex_pct)} | Breadth (Upper/Lower) {advances}/{declines}",
+            f"EOD sentiment ({eod_date}): {eod} | Net FII+DII {net_sum:+.0f} cr",
+            f"Outside movers not in list: {len(outside)} ({top_outside})",
+        ]
 
     def _print_table(self, buy_list: list[StockSignal]):
         hdr = (f"  {'#':<3} {'SYMBOL':<14} {'SCORE':>5} {'PRICE':>8} "
@@ -169,6 +275,7 @@ class Reporter:
         lines.append(f"NSE SCANNER | {result['timestamp']}")
         lines.append(f"Scanned: {result['stats']['scanned']} | "
                      f"Qualified: {result['stats']['qualified']}")
+        lines.extend(self._market_sentiment_lines(result))
         lines.append("-" * 50)
         for rank, sig in enumerate(result["buy_list"], 1):
             st = "BULL" if sig.supertrend_dir == 1 else "BEAR"

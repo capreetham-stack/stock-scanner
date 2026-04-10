@@ -72,6 +72,9 @@ class StockSignal:
         self.supertrend_dir = 0
         self.atr            = 0.0
         self.pattern        = "none"
+        self.adx_rising     = False
+        self.vwap_pullback_ok = False
+        self.high_conviction = False
         self.buy_qty        = 0.0
         self.sell_qty       = 0.0
         self.buy_sell_ratio = None
@@ -109,6 +112,9 @@ class StockSignal:
             "supertrend":      "BULL" if self.supertrend_dir == 1 else "BEAR",
             "atr":             round(self.atr, 2),
             "pattern":         self.pattern,
+            "adx_rising":      self.adx_rising,
+            "vwap_pullback_ok": self.vwap_pullback_ok,
+            "high_conviction": self.high_conviction,
             "buy_qty":         round(self.buy_qty, 0),
             "sell_qty":        round(self.sell_qty, 0),
             "buy_sell_ratio":  (round(self.buy_sell_ratio, 2)
@@ -159,6 +165,8 @@ class SignalEngine:
     @staticmethod
     def _build_buy_heading(sig: StockSignal) -> str:
         reasons = " | ".join(sig.reasons)
+        if sig.high_conviction:
+            return "BUY: High Conviction (Trend + RVOL + VWAP Pullback + R:R)"
         long_term_weak = (
             sig.chg_30d_pct is not None and sig.chg_90d_pct is not None and
             sig.chg_30d_pct < 0 and sig.chg_90d_pct < 0
@@ -255,18 +263,30 @@ class SignalEngine:
         st_msg = "Supertrend: bullish" if sig.supertrend_dir == 1 else "Supertrend: bearish"
 
         vwap_val = float(row.get("vwap", sig.current_price))
-        if sig.current_price >= vwap_val:
-            vwap_msg = f"VWAP: price {sig.current_price:.2f} above/near VWAP {vwap_val:.2f}"
+        vwap_dist_pct_msg = (
+            abs(sig.current_price - vwap_val) / vwap_val * 100
+            if vwap_val else 0.0
+        )
+        if sig.current_price >= vwap_val and vwap_dist_pct_msg <= cfg.VWAP_PULLBACK_PCT:
+            vwap_msg = (
+                f"VWAP: pullback zone ({vwap_dist_pct_msg:.2f}% from VWAP {vwap_val:.2f})"
+            )
+        elif sig.current_price > vwap_val:
+            vwap_msg = (
+                f"VWAP: extended {vwap_dist_pct_msg:.2f}% above VWAP {vwap_val:.2f}"
+            )
         else:
             vwap_msg = f"VWAP: price {sig.current_price:.2f} below VWAP {vwap_val:.2f}"
 
         atr_pct = (sig.atr / sig.current_price * 100) if sig.current_price else 0.0
         atr_msg = f"ATR: {sig.atr:.2f} ({atr_pct:.2f}% daily volatility)"
 
-        if sig.vol_ratio >= cfg.VOLUME_SURGE_MULT:
-            vol_msg = f"Volume: surge at {sig.vol_ratio:.2f}x average"
+        if sig.vol_ratio >= cfg.RVOL_HIGH_CONVICTION:
+            vol_msg = f"Volume: RVOL strong at {sig.vol_ratio:.2f}x average"
         else:
-            vol_msg = f"Volume: {sig.vol_ratio:.2f}x average (no major surge)"
+            vol_msg = (
+                f"Volume: {sig.vol_ratio:.2f}x average (below {cfg.RVOL_HIGH_CONVICTION:.1f}x)"
+            )
 
         stoch_k = float(row.get("stoch_k", 50.0))
         stoch_d = float(row.get("stoch_d", 50.0))
@@ -277,11 +297,16 @@ class SignalEngine:
         else:
             stoch_msg = f"Stochastic: neutral (K {stoch_k:.1f}, D {stoch_d:.1f})"
 
+        prev_adx = float(prev_row.get("adx", np.nan))
+        sig.adx_rising = bool(np.isfinite(prev_adx) and sig.adx > prev_adx)
+
         adx_val = sig.adx
-        if adx_val >= 25:
-            adx_msg = f"ADX: {adx_val:.1f}, strong trend"
+        if adx_val >= cfg.ADX_STRONG_MIN and sig.adx_rising:
+            adx_msg = f"ADX: {adx_val:.1f}, strong and rising (prev {prev_adx:.1f})"
+        elif adx_val >= cfg.ADX_STRONG_MIN:
+            adx_msg = f"ADX: {adx_val:.1f}, strong but not rising (prev {prev_adx:.1f})"
         elif adx_val >= 20:
-            adx_msg = f"ADX: {adx_val:.1f}, moderate trend"
+            adx_msg = f"ADX: {adx_val:.1f}, moderate trend (prev {prev_adx:.1f})"
         else:
             adx_msg = f"ADX: {adx_val:.1f}, weak trend/chop"
 
@@ -325,9 +350,25 @@ class SignalEngine:
         if Indicators.is_ema_bullish_aligned(row):
             sig.add(W["ema_alignment"], "EMA stack bullish aligned")
 
-        # Price vs VWAP
-        if sig.current_price > float(row.get("vwap", sig.current_price)):
-            sig.add(W["price_above_vwap"], "Price above VWAP")
+        # ADX (strict): trend must be strong and rising
+        if sig.adx >= cfg.ADX_STRONG_MIN and sig.adx_rising:
+            sig.add(8, f"ADX strong+rising ({sig.adx:.1f})")
+        elif 0 < sig.adx < cfg.ADX_STRONG_MIN:
+            sig.subtract(8, f"ADX below {cfg.ADX_STRONG_MIN} ({sig.adx:.1f})")
+
+        # Price vs VWAP (strict pullback, avoid chasing)
+        vwap_val = float(row.get("vwap", sig.current_price))
+        vwap_dist_pct = (
+            abs(sig.current_price - vwap_val) / vwap_val * 100
+            if vwap_val else 0.0
+        )
+        sig.vwap_pullback_ok = bool(sig.current_price >= vwap_val and vwap_dist_pct <= cfg.VWAP_PULLBACK_PCT)
+        if sig.vwap_pullback_ok:
+            sig.add(W["price_above_vwap"], f"VWAP pullback entry ({vwap_dist_pct:.2f}% from VWAP)")
+        elif sig.current_price > vwap_val and vwap_dist_pct >= cfg.VWAP_CHASE_PCT:
+            sig.subtract(6, f"Price extended {vwap_dist_pct:.2f}% above VWAP (chasing risk)")
+        elif sig.current_price < vwap_val:
+            sig.subtract(4, "Price below VWAP")
 
         # Bollinger band bounce
         if Indicators.is_near_bb_lower(row):
@@ -340,9 +381,11 @@ class SignalEngine:
             sig.add(W["demand_zone_near"] + extra,
                     f"Near demand zone ({sig.demand_proximity:.1f}% away)")
 
-        # Volume surge
-        if Indicators.is_volume_surge(row):
-            sig.add(W["volume_surge"], f"Volume surge ({sig.vol_ratio:.1f}x avg)")
+        # Volume surge (strict): RVOL must clear high-conviction floor
+        if sig.vol_ratio >= cfg.RVOL_HIGH_CONVICTION:
+            sig.add(W["volume_surge"], f"RVOL strong ({sig.vol_ratio:.2f}x)")
+        else:
+            sig.subtract(6, f"RVOL below {cfg.RVOL_HIGH_CONVICTION:.1f}x ({sig.vol_ratio:.2f}x)")
 
         # Supertrend
         if Indicators.is_supertrend_bullish(row):
@@ -430,9 +473,11 @@ class SignalEngine:
         if sig.gap_pct < cfg.GAP_DOWN_PCT:
             sig.subtract(10, f"Gap down {sig.gap_pct:.1f}%")
 
-        # Poor R:R
-        if 0 < sig.reward_risk < 1.0:
-            sig.subtract(8, f"Poor R:R ({sig.reward_risk:.1f}x)")
+        # Risk-reward gate (strict)
+        if 0 < sig.reward_risk < cfg.RR_STRICT_MIN:
+            sig.subtract(12, f"R:R below {cfg.RR_STRICT_MIN:.1f}x ({sig.reward_risk:.2f}x)")
+        elif sig.reward_risk >= cfg.RR_STRICT_MIN:
+            sig.add(6, f"R:R acceptable ({sig.reward_risk:.2f}x)")
 
         # ── PCR (optional) ────────────────────────────────────────────────────
         if pcr is not None:
@@ -471,6 +516,14 @@ class SignalEngine:
             f"{sig.chg_7d_pct:.2f}% / {sig.chg_30d_pct:.2f}% / {sig.chg_90d_pct:.2f}%"
             if None not in (sig.chg_7d_pct, sig.chg_30d_pct, sig.chg_90d_pct)
             else "Insufficient candles for full 7/30/90d trend"
+        )
+
+        sig.high_conviction = bool(
+            sig.adx >= cfg.ADX_STRONG_MIN and
+            sig.adx_rising and
+            sig.vol_ratio >= cfg.RVOL_HIGH_CONVICTION and
+            sig.reward_risk >= cfg.RR_STRICT_MIN and
+            sig.vwap_pullback_ok
         )
 
         sig.buy_heading = self._build_buy_heading(sig)

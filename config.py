@@ -61,10 +61,16 @@ ATR_PERIOD          = 14
 SUPERTREND_MULT     = 3.0
 
 VWAP_DEVIATION_PCT  = 0.5     # within ±0.5 % of VWAP = near-VWAP
+VWAP_PULLBACK_PCT   = 0.5     # strict pullback zone for high-conviction entries
+VWAP_CHASE_PCT      = 1.2     # above this from VWAP = chase risk
 
 # ─── Volume Analysis ──────────────────────────────────────────────────────────
 VOLUME_AVG_PERIOD   = 20
 VOLUME_SURGE_MULT   = 1.5     # today's vol > 1.5× avg ⇒ surge
+RVOL_HIGH_CONVICTION = 1.5    # strict RVOL floor for high-conviction entries
+
+# ─── Trend Strength (ADX) ───────────────────────────────────────────────────
+ADX_STRONG_MIN      = 25      # ADX must be above this
 
 # ─── Demand / Supply Zone Parameters ─────────────────────────────────────────
 DS_LOOKBACK_DAYS    = 60      # candles to look back for zones
@@ -103,6 +109,7 @@ TOP_N_STOCKS        = 10      # number of top picks to display
 DEFAULT_RISK_PCT    = 0.5     # risk 0.5 % of capital per trade
 SL_ATR_MULT         = 1.5     # stop-loss = entry - 1.5 × ATR
 TARGET_RR           = 2.0     # minimum reward : risk ratio
+RR_STRICT_MIN       = 1.5     # strict minimum R:R for actionable entries
 
 # ─── Data Settings ────────────────────────────────────────────────────────────
 HISTORICAL_DAYS     = 100     # days of OHLCV to fetch
