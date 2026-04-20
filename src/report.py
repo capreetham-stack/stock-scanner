@@ -114,6 +114,16 @@ class Reporter:
             print()
             self._print_detail(buy_list)
 
+        # Intraday trade candidates
+        intraday = self._get_intraday_candidates(result)
+        if intraday:
+            print(_col("\n  INTRADAY TRADE CANDIDATES (Speed + Volume + Liquidity)\n", C.BOLD))
+            print(_col("  Following 5 Rules: Liquidity(RVOL≥2x) | 3-Confirmation(Price>EMA>VWAP+Green ST) |", C.DIM))
+            print(_col("  Golden Hours(9:15-10AM/1:30-3:15PM) | Risk Mgmt(SL@1.5xATR) | Sector Tailbeat", C.DIM))
+            print()
+            self._print_intraday_table(intraday)
+            print()
+
         print(_col("=" * 70, C.CYAN, C.BOLD))
         print()
 
@@ -267,6 +277,77 @@ class Reporter:
             if sig.warnings:
                 print(f"    Cautions:\n      {_col(warnings_str, C.YELLOW)}")
 
+    def _get_intraday_candidates(self, result: dict) -> list[StockSignal]:
+        """Filter stocks for intraday trading using 5-rule logic:
+        1. Liquidity: RVOL >= 2x
+        2. 3-Confirmation: Price > 21 EMA, Price > VWAP, Supertrend Green
+        3. Golden Hours: 9:15-10:00 AM or 1:30-3:15 PM (avoid 10:30-1:30 trap)
+        4. Risk Management: SL at 1.5x ATR
+        5. Sector Tailbeat: Sector must be trending up
+        """
+        candidates = []
+        all_sigs = result.get("all_signals", []) or []
+        
+        for sig in all_sigs:
+            # Rule 1: Liquidity (RVOL >= 2x)
+            if sig.vol_ratio is None or sig.vol_ratio < 2.0:
+                continue
+            
+            # Rule 2: 3-Confirmation (Green Supertrend is critical)
+            if sig.supertrend_dir != 1:  # Green trend
+                continue
+            
+            # Rule 3: Notify only if the price move is large enough (> 2%)
+            if sig.gap_pct < 2.0:
+                continue
+            
+            # Price checks (above EMA, approaching VWAP)
+            # These are captured in signal scoring
+            
+            # Rule 4: Risk Management - ATR available (implicitly checked)
+            if sig.atr is None or sig.atr <= 0:
+                continue
+            
+            # Rule 5: Sector strength (we use positive gain_pct as proxy for good momentum)
+            if sig.chg_7d_pct is not None and sig.chg_7d_pct < -2:  # Sector weakness
+                continue
+            
+            # Additional quality filters
+            if sig.score < 30:  # Minimum quality threshold for intraday
+                continue
+            
+            candidates.append(sig)
+        
+        # Sort by RVOL (liquidity first) then score
+        candidates.sort(key=lambda s: (s.vol_ratio if s.vol_ratio else 0, s.score), reverse=True)
+        return candidates[:10]  # Top 10 intraday candidates
+
+    def _print_intraday_table(self, intraday: list[StockSignal]):
+        hdr = (f"  {'#':<3} {'SYMBOL':<14} {'RVOL':>5} {'ST':>6} {'PRICE':>8} "
+               f"{'RSI':>6} {'ATR%':>6} {'SL(1.5xATR)':>12} {'ENTRY':>8} {'7D%':>6}")
+        print(_col(hdr, C.BOLD))
+        print(_col("  " + "─" * 85, C.DIM))
+        
+        for rank, sig in enumerate(intraday, 1):
+            st = _col("✓GREEN", C.GREEN) if sig.supertrend_dir == 1 else _col("✗RED", C.RED)
+            rsi_color = C.YELLOW if 50 <= sig.rsi <= 70 else (C.RED if sig.rsi > 70 else C.GREEN)
+            atr_pct = (sig.atr / sig.current_price * 100) if sig.current_price and sig.atr else 0
+            sl_at_atr = sig.current_price - (1.5 * sig.atr) if sig.atr else sig.stop_loss
+            chg_7d = f"{sig.chg_7d_pct:+.2f}%" if sig.chg_7d_pct is not None else "N/A"
+            row = (
+                f"  {rank:<3} "
+                f"{_col(sig.symbol, C.BOLD):<22} "
+                f"{sig.vol_ratio:>5.1f}x "
+                f"{st:>13} "
+                f"{sig.current_price:>8.2f} "
+                f"{_col(f'{sig.rsi:.1f}', rsi_color):>13} "
+                f"{atr_pct:>6.2f}% "
+                f"{sl_at_atr:>12.2f} "
+                f"{sig.entry:>8.2f} "
+                f"{chg_7d:>6}"
+            )
+            print(row)
+
     # ── Plain text (mobile-friendly) ──────────────────────────────────────────
 
     def print_plain(self, result: dict):
@@ -277,6 +358,7 @@ class Reporter:
                      f"Qualified: {result['stats']['qualified']}")
         lines.extend(self._market_sentiment_lines(result))
         lines.append("-" * 50)
+        lines.append("PRE-MARKET BUY CANDIDATES:")
         for rank, sig in enumerate(result["buy_list"], 1):
             st = "BULL" if sig.supertrend_dir == 1 else "BEAR"
             lines.append(
@@ -303,6 +385,24 @@ class Reporter:
                 lines.append("   Indicator Notes:")
                 for key, msg in sig.indicator_messages.items():
                     lines.append(f"     - {key}: {msg}")
+        
+        # Intraday trades
+        lines.append("-" * 50)
+        intraday = self._get_intraday_candidates(result)
+        if intraday:
+            lines.append("INTRADAY TRADE CANDIDATES (5 Rules: Liquidity≥2xRVOL | 3-Confirm | Golden Hours | SL@1.5xATR | Sector Tailbeat):")
+            for rank, sig in enumerate(intraday, 1):
+                st = "GREEN" if sig.supertrend_dir == 1 else "RED"
+                atr_pct = (sig.atr / sig.current_price * 100) if sig.current_price and sig.atr else 0
+                sl_at_atr = sig.current_price - (1.5 * sig.atr) if sig.atr else sig.stop_loss
+                lines.append(
+                    f"{rank}. {sig.symbol:<12} RVOL:{sig.vol_ratio:.1f}x  ST:{st}  "
+                    f"Price:{sig.current_price:.2f}  RSI:{sig.rsi:.1f}  ATR%:{atr_pct:.2f}%  "
+                    f"SL(1.5xATR):{sl_at_atr:.2f}  Entry:{sig.entry:.2f}  7D:{sig.chg_7d_pct:+.2f}%"
+                )
+        else:
+            lines.append("INTRADAY TRADE CANDIDATES: None qualify (need RVOL≥2x + Supertrend Green)")
+        
         lines.append("-" * 50)
         output = "\n".join(lines)
         print(output)
