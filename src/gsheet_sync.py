@@ -124,10 +124,6 @@ class GoogleSheetSync:
         }
 
     def sync_daily(self, result: dict[str, Any], prefix: str = "SCAN") -> str:
-        if not result.get("buy_list"):
-            logger.info("No buy_list rows to sync to Google Sheets")
-            return ""
-
         client = self._client()
         sh = self._open_sheet(client)
 
@@ -141,7 +137,12 @@ class GoogleSheetSync:
             idx += 1
             final_title = f"{ws_title}_{idx}"
 
-        rows = [self._format_morning_row(idx, s.to_dict()) for idx, s in enumerate(result["buy_list"], 1)]
+        if not result.get("buy_list"):
+            logger.info("No buy_list rows found. Inserting placeholder row.")
+            dummy = {"symbol": "NONE", "buy_heading": "No stocks met criteria"}
+            rows = [self._format_morning_row(1, dummy)]
+        else:
+            rows = [self._format_morning_row(idx, s.to_dict()) for idx, s in enumerate(result["buy_list"], 1)]
         headers = list(rows[0].keys())
 
         ws = sh.add_worksheet(title=final_title, rows=max(100, len(rows) + 5), cols=max(20, len(headers) + 2))

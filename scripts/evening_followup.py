@@ -133,6 +133,8 @@ def main() -> None:
 
     for row in morning_rows:
         symbol = str(row_value(row, "Symbol", "symbol", default="")).strip()
+        if not symbol or symbol.upper() == "NONE":
+            continue
         decision = str(row_value(row, "Decision", "buy_heading", default="")).strip()
         why_buy = str(row_value(row, "Why Buy", "why_buy", default="")).strip()
         cautions = str(row_value(row, "Cautions", "cautions_summary", default="")).strip()

@@ -125,7 +125,7 @@ def main() -> None:
 
     for idx, row in enumerate(morning_rows, 1):
         symbol = str(row_value(row, "Symbol", "symbol", default="")).strip()
-        if not symbol:
+        if not symbol or symbol.upper() == "NONE":
             continue
 
         score = to_float(row_value(row, "Score", "score", default=0.0), 0.0)
@@ -156,6 +156,10 @@ def main() -> None:
             fmt_pct(move_pct),
             status,
         ])
+
+    if not movement_rows:
+        print("No valid morning recommendations to append follow-up for.")
+        return
 
     headers = [
         "Rank",
