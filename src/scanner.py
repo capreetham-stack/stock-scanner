@@ -30,9 +30,10 @@ class PreMarketScanner:
     4.  Return top-N buy recommendations.
     """
 
-    def __init__(self, watchlist: list[str] | None = None, max_workers: int = 8):
+    def __init__(self, watchlist: list[str] | None = None, max_workers: int = 8, run_type: str = "morning"):
         self.watchlist   = watchlist or cfg.WATCHLIST
         self.max_workers = max_workers
+        self.run_type    = run_type
         self._fetcher    = NSEFetcher()
         self._engine     = SignalEngine()
 
@@ -84,6 +85,11 @@ class PreMarketScanner:
                 logger.warning("%s: empty OHLCV, skipping", symbol)
                 return None
 
+            intraday_df = None
+            if self.run_type == "hourly":
+                # Fetch 2 days of 5m data for intraday/MTF analysis
+                intraday_df = self._fetcher.get_historical_ohlcv(symbol, days=2, interval="5m")
+
             delivery_pct = 0.0
             try:
                 del_data = self._fetcher.get_delivery_data(symbol)
@@ -107,6 +113,7 @@ class PreMarketScanner:
             sig = self._engine.score_stock(
                 symbol        = symbol,
                 daily_df      = daily_df,
+                intraday_df   = intraday_df,
                 delivery_pct  = delivery_pct,
                 pcr           = pcr,
                 buy_qty       = float(pressure.get("buy_qty", 0.0) or 0.0),

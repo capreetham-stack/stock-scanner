@@ -127,7 +127,12 @@ class GoogleSheetSync:
         client = self._client()
         sh = self._open_sheet(client)
 
-        date_title = dt.datetime.now().strftime("%Y-%m-%d")
+        IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
+        if prefix == "HOURLY":
+            date_title = dt.datetime.now(IST).strftime("%Y-%m-%d_%H00")
+        else:
+            date_title = dt.datetime.now(IST).strftime("%Y-%m-%d")
+            
         ws_title = f"{prefix}_{date_title}"
 
         existing = {ws.title for ws in sh.worksheets()}

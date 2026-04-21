@@ -34,6 +34,7 @@ Negative adjustments
 from __future__ import annotations
 
 import logging
+import datetime
 import numpy as np
 import pandas as pd
 
@@ -512,6 +513,10 @@ class SignalEngine:
             if sig.chg_30d_pct < 0 and sig.chg_90d_pct < 0:
                 sig.subtract(8, "Supertrend bearish against 1M/3M trend")
 
+        # ── Apply Intraday Theories (Only active on Hourly Scans) ─────────────
+        if intraday_df is not None and not intraday_df.empty:
+            self._apply_intraday_theories(sig, daily_df, intraday_df)
+
         sig.indicator_messages["Lookback Trend (7/30/90d)"] = (
             f"{sig.chg_7d_pct:.2f}% / {sig.chg_30d_pct:.2f}% / {sig.chg_90d_pct:.2f}%"
             if None not in (sig.chg_7d_pct, sig.chg_30d_pct, sig.chg_90d_pct)
@@ -539,3 +544,59 @@ class SignalEngine:
             key=lambda s: s.score,
             reverse=True,
         )
+
+    def _apply_intraday_theories(self, sig: StockSignal, daily_df: pd.DataFrame, df_5m: pd.DataFrame):
+        try:
+            # Resample 5m to 15m and 1h for Multi-Timeframe Alignment
+            df_15m = df_5m.resample('15min').agg({'open':'first', 'high':'max', 'low':'min', 'close':'last', 'volume':'sum'}).dropna()
+            df_1h = df_5m.resample('1h').agg({'open':'first', 'high':'max', 'low':'min', 'close':'last', 'volume':'sum'}).dropna()
+            
+            if df_1h.empty or df_15m.empty: return
+            
+            # 1. MTF Alignment
+            ema_20_1h = Indicators.ema(df_1h['close'], 20)
+            trend_1h_bullish = df_1h['close'].iloc[-1] > ema_20_1h.iloc[-1]
+            
+            vwap_15m = Indicators.vwap(df_15m['high'], df_15m['low'], df_15m['close'], df_15m['volume'])
+            vwap_15m_support = df_15m['close'].iloc[-1] > vwap_15m.iloc[-1]
+            
+            vol_sma_5m = df_5m['volume'].rolling(20).mean().iloc[-1]
+            vol_5m = df_5m['volume'].iloc[-1]
+            vol_breakout = vol_5m > (vol_sma_5m * 1.5) if vol_sma_5m else False
+            
+            if trend_1h_bullish:
+                sig.add(W.get("1h_trend_aligned", 25), "MTF: 1H Trend Bullish (>20EMA)")
+            if vwap_15m_support:
+                sig.add(W.get("15m_vwap_support", 15), "MTF: 15M Price holding above VWAP")
+            if vol_breakout:
+                sig.add(W.get("5m_breakout_vol", 20), "MTF: 5M Breakout Volume Surge")
+                
+            # 2. VPOC & ORB
+            today_date = df_5m.index[-1].date()
+            df_today = df_5m[df_5m.index.date == today_date]
+            if df_today.empty: return
+            
+            current_price = df_today['close'].iloc[-1]
+            vpoc = Indicators.vpoc(df_today)
+            sig.indicator_messages["VPOC"] = f"Intraday VPOC at {vpoc:.2f}"
+            
+            orb_df = df_today.between_time("09:15", "09:30")
+            if not orb_df.empty:
+                orb_high = orb_df['high'].max()
+                if current_price > orb_high and current_price > vpoc:
+                    sig.add(W.get("orb_vpoc_bullish", 15), "ORB Breakout + Above VPOC")
+                elif current_price > orb_high and current_price < vpoc:
+                    sig.subtract(10, "ORB Breakout but Below VPOC (Sell Pressure)")
+                    
+                if df_today.index[-1].time() >= datetime.time(10, 30) and current_price > orb_high and vol_breakout:
+                    sig.add(W.get("1030_reversal", 15), "10:30 AM Reversal ORB Breakout")
+                        
+            # 3. Liquidity Sweeps / Bull Trap
+            if len(daily_df) >= 2:
+                pdh = daily_df['high'].iloc[-2]
+                if pdh * 0.998 <= current_price <= pdh * 1.002:  # Price touching PDH
+                    if vol_5m < vol_sma_5m or sig.rsi > 65:
+                        sig.subtract(abs(W.get("liquidity_sweep_trap", -20)), "Bull Trap / Liquidity Grab at PDH")
+                        
+        except Exception as e:
+            logger.debug("Intraday MTF logic failed for %s: %s", sig.symbol, e)

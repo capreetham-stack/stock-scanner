@@ -8,6 +8,8 @@ on:
     - cron: "45 6 * * 1-5"
     # 11:30 UTC = 17:00 IST, Monday-Friday
     - cron: "30 11 * * 1-5"
+    # 04:30 to 09:30 UTC = 10:00 to 15:00 IST hourly, Monday-Friday
+    - cron: "30 4-9 * * 1-5"
   push:
     branches:
       - main
@@ -22,6 +24,7 @@ on:
           - morning
           - midday
           - evening
+          - hourly
 
 permissions:
   contents: read
@@ -95,6 +98,9 @@ jobs:
           elif [ "${{ github.event.schedule }}" = "45 6 * * 1-5" ] || [ "$RUN_TYPE" = "midday" ]; then
             echo "Running mid-day scanner..." >> logs/github-actions.log
             python main.py --sync-gsheet --plain --watchlist NIFTY500 2>&1 | tee -a logs/github-actions.log
+          elif [ "${{ github.event.schedule }}" = "30 4-9 * * 1-5" ] || [ "$RUN_TYPE" = "hourly" ]; then
+            echo "Running hourly scanner..." >> logs/github-actions.log
+            python main.py --sync-gsheet --plain --watchlist NIFTY500 --run-type hourly 2>&1 | tee -a logs/github-actions.log
           else
             echo "Running morning scanner..." >> logs/github-actions.log
             python main.py --sync-gsheet --plain --watchlist NIFTY500 2>&1 | tee -a logs/github-actions.log

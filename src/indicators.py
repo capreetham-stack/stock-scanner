@@ -184,6 +184,28 @@ class Indicators:
         """Current volume / avg volume — ratio > 1 means above-average."""
         return volume / Indicators.volume_sma(volume, period).replace(0, np.nan)
 
+    # ── Volume Profile Point of Control (VPOC) ───────────────────────────────
+
+    @staticmethod
+    def vpoc(df_intraday: pd.DataFrame, bins: int = 20) -> float:
+        if df_intraday.empty: return 0.0
+        price_min = df_intraday['low'].min()
+        price_max = df_intraday['high'].max()
+        if price_max == price_min: return price_max
+        
+        bin_size = (price_max - price_min) / bins
+        profile = np.zeros(bins)
+        
+        tp = (df_intraday['high'] + df_intraday['low'] + df_intraday['close']) / 3
+        for i in range(len(df_intraday)):
+            p = tp.iloc[i]
+            v = df_intraday['volume'].iloc[i]
+            b = min(int((p - price_min) / bin_size), bins - 1)
+            profile[b] += v
+            
+        max_bin = np.argmax(profile)
+        return price_min + (max_bin + 0.5) * bin_size
+
     # ── Stochastic Oscillator ─────────────────────────────────────────────────
 
     @staticmethod

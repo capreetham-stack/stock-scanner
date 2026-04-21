@@ -101,6 +101,14 @@ SCORE_WEIGHTS = {
     "prev_day_high_break":   8,
     "delivery_pct_high":     7,
     "buy_pressure":         12,
+
+    # --- Hourly / Intraday Strategy Weights ---
+    "1h_trend_aligned":     25,
+    "15m_vwap_support":     15,
+    "5m_breakout_vol":      20,
+    "orb_vpoc_bullish":     15,
+    "liquidity_sweep_trap": -20,
+    "1030_reversal":        15,
 }
 
 MIN_SCORE_TO_BUY    = 35      # only recommend stocks scoring ≥ this

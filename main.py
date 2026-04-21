@@ -145,6 +145,9 @@ def parse_args():
     p.add_argument("--log-level", type=str, default="INFO",
                    choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                    help="Logging verbosity")
+    p.add_argument("--run-type", type=str, default="morning",
+                   choices=["morning", "midday", "evening", "hourly"],
+                   help="Run type constraint for scanner mode")
     return p.parse_args()
 
 
@@ -194,7 +197,7 @@ def run_scan(args) -> None:
         cfg.MIN_SCORE_TO_BUY = args.min_score
 
     watchlist = get_watchlist(args.watchlist)
-    scanner   = PreMarketScanner(watchlist=watchlist, max_workers=max(1, args.workers))
+    scanner   = PreMarketScanner(watchlist=watchlist, max_workers=max(1, args.workers), run_type=args.run_type)
     logging.info("Selected watchlist '%s' with %d symbols", args.watchlist, len(watchlist))
     result    = scanner.run(top_n=args.top)
 
@@ -229,7 +232,8 @@ def run_scan(args) -> None:
         else:
             try:
                 sync = GoogleSheetSync(sheet_target, gsheet_creds)
-                ws_title = sync.sync_daily(result, prefix="PRE915")
+                ws_prefix = "HOURLY" if args.run_type == "hourly" else "PRE915"
+                ws_title = sync.sync_daily(result, prefix=ws_prefix)
                 if ws_title:
                     print(f"  GoogleSheet → {ws_title}")
             except Exception as exc:
