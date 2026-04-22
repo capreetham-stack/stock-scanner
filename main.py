@@ -125,8 +125,8 @@ def parse_args():
                    help="Do not save CSV / JSON output")
     p.add_argument("--min-score", type=int, default=None,
                    help=f"Override minimum score threshold (default: {cfg.MIN_SCORE_TO_BUY})")
-    p.add_argument("--watchlist", type=str, choices=["NIFTY50", "FNO", "NIFTY500", "ALL"], default="ALL",
-                   help="Restrict watchlist (default: ALL)")
+    p.add_argument("--watchlist", type=str, default="ALL",
+                   help="Restrict watchlist (NIFTY50, FNO, NIFTY500, ALL, or comma-separated symbols)")
     p.add_argument("--workers",   type=int, default=16,
                    help="Parallel workers for scanning (default: 16)")
     p.add_argument("--sync-gsheet", action="store_true",
@@ -164,7 +164,13 @@ def get_watchlist(choice: str) -> list[str]:
         if symbols:
             return symbols
         logging.warning("NIFTY500 fetch failed; falling back to default watchlist")
-    return cfg.WATCHLIST
+        return cfg.WATCHLIST
+
+    if choice == "ALL":
+        return cfg.WATCHLIST
+        
+    # Support comma-separated symbols for fast local testing
+    return [s.strip().upper() for s in choice.split(",") if s.strip()]
 
 
 # ─── Single scan run ──────────────────────────────────────────────────────────

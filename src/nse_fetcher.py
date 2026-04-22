@@ -463,6 +463,25 @@ class NSEFetcher:
             self._save_cache(cache_key, data)
         return data or {}
 
+    def get_all_indices(self) -> dict:
+        """Fetch performance of all NSE indices."""
+        cache_key = "all_indices"
+        cached = self._load_cache(cache_key, max_age_secs=120)
+        if cached:
+            return cached
+        data = self._nse.get("allIndices")
+        res = {}
+        if data and isinstance(data, dict) and "data" in data:
+            for row in data["data"]:
+                sym = row.get("indexSymbol") or row.get("index")
+                if sym:
+                    res[sym.upper()] = {
+                        "last": self._to_float(row.get("last")),
+                        "pchg": self._to_float(row.get("percentChange") or row.get("perChange"))
+                    }
+            self._save_cache(cache_key, res)
+        return res
+
     def get_index_constituents(self, index_name: str = "NIFTY 500") -> list[str]:
         """Fetch index constituents from NSE and return clean symbol list."""
         key = f"index_constituents_{index_name.replace(' ', '_')}"

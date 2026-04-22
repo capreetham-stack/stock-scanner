@@ -74,11 +74,28 @@ class PreMarketScanner:
             logger.debug("52wk data failed: %s", e)
             ctx["52wk"] = {}
 
+        try:
+            ctx["indices"] = self._fetcher.get_all_indices()
+        except Exception as e:
+            logger.debug("allIndices failed: %s", e)
+            ctx["indices"] = {}
+
+        try:
+            ctx["sector_constituents"] = {
+                "NIFTY IT": self._fetcher.get_index_constituents("NIFTY IT"),
+                "NIFTY FMCG": self._fetcher.get_index_constituents("NIFTY FMCG"),
+                "NIFTY PHARMA": self._fetcher.get_index_constituents("NIFTY PHARMA"),
+                "NIFTY BANK": self._fetcher.get_index_constituents("NIFTY BANK"),
+            }
+        except Exception as e:
+            logger.debug("sector constituents failed: %s", e)
+            ctx["sector_constituents"] = {}
+
         return ctx
 
     # ── per-symbol analysis ───────────────────────────────────────────────────
 
-    def _analyse_symbol(self, symbol: str, pcr: float | None) -> StockSignal | None:
+    def _analyse_symbol(self, symbol: str, pcr: float | None, ctx: dict = None) -> StockSignal | None:
         try:
             daily_df = self._fetcher.get_historical_ohlcv(symbol, days=cfg.HISTORICAL_DAYS)
             if daily_df.empty:
@@ -119,6 +136,7 @@ class PreMarketScanner:
                 buy_qty       = float(pressure.get("buy_qty", 0.0) or 0.0),
                 sell_qty      = float(pressure.get("sell_qty", 0.0) or 0.0),
                 buy_sell_ratio= pressure.get("buy_sell_ratio"),
+                market_context= ctx,
             )
             return sig
         except Exception as exc:
@@ -162,7 +180,7 @@ class PreMarketScanner:
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as pool:
             futures = {
-                pool.submit(self._analyse_symbol, sym, pcr): sym
+                pool.submit(self._analyse_symbol, sym, pcr, ctx): sym
                 for sym in self.watchlist
             }
             for future in concurrent.futures.as_completed(futures):
@@ -207,4 +225,4 @@ class PreMarketScanner:
             pcr = self._fetcher.get_pcr(symbol)
         except Exception:
             pass
-        return self._analyse_symbol(symbol, pcr)
+        return self._analyse_symbol(symbol, pcr, self._market_context())

@@ -21,6 +21,7 @@ from google.oauth2.service_account import Credentials
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from src.nse_fetcher import NSEFetcher
+from main import load_env_file, get_env_value_from_file, auto_detect_gsheet_creds
 
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
@@ -111,8 +112,17 @@ def classify_nextday(score: float, eod_change_pct: float) -> str:
 
 
 def main() -> None:
+    load_env_file()
     sheet_target = (os.getenv("GOOGLE_SHEET_URL", "") or os.getenv("GOOGLE_SHEET_KEY", "")).strip()
+    if not sheet_target:
+        sheet_target = (get_env_value_from_file("GOOGLE_SHEET_URL") or get_env_value_from_file("GOOGLE_SHEET_KEY")).strip()
+
     creds_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+    if not creds_path:
+        creds_path = get_env_value_from_file("GOOGLE_APPLICATION_CREDENTIALS").strip()
+
+    if not creds_path:
+        creds_path = auto_detect_gsheet_creds()
 
     if not sheet_target:
         raise RuntimeError("Missing GOOGLE_SHEET_URL or GOOGLE_SHEET_KEY")

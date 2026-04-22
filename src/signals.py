@@ -200,6 +200,7 @@ class SignalEngine:
         buy_qty:       float           = 0.0,
         sell_qty:      float           = 0.0,
         buy_sell_ratio: float | None   = None,
+        market_context: dict           = None,
     ) -> StockSignal:
 
         sig = StockSignal(symbol)
@@ -513,9 +514,41 @@ class SignalEngine:
             if sig.chg_30d_pct < 0 and sig.chg_90d_pct < 0:
                 sig.subtract(8, "Supertrend bearish against 1M/3M trend")
 
+        # ── Advanced Institutional Logic (Capital Migration & Relative Strength) ──
+        if market_context:
+            indices = market_context.get("indices", {})
+            sectors = market_context.get("sector_constituents", {})
+            
+            stock_sector = None
+            for sec_name, constituents in sectors.items():
+                if symbol in constituents:
+                    stock_sector = sec_name
+                    break
+
+            it_pchg = indices.get("NIFTY IT", {}).get("pchg", 0.0)
+            bank_pchg = indices.get("NIFTY BANK", {}).get("pchg", 0.0)
+            
+            stock_pchg = (sig.current_price - sig.prev_close) / sig.prev_close * 100 if sig.prev_close else 0.0
+
+            # 1. Capital Migration (Negative Correlation Hedge - Daily fallback)
+            if stock_sector in ["NIFTY FMCG", "NIFTY PHARMA"]:
+                if it_pchg < -0.5 and stock_pchg > 0:
+                    sig.add(10, f"Capital Migration: IT bleeding ({it_pchg:.1f}%), {stock_sector} gaining")
+
+            # 2. Weightage Reality Check
+            if bank_pchg < -0.5 and it_pchg < -0.5:
+                if sig.vol_ratio < 3.0:
+                    sig.subtract(25, f"Weightage Gravity: Bank ({bank_pchg:.1f}%) & IT ({it_pchg:.1f}%) bleeding. Needs high RVOL.")
+
+            # 3. Relative Strength Scan (Stock vs Sector Decoupling)
+            if stock_sector:
+                sector_pchg = indices.get(stock_sector, {}).get("pchg", 0.0)
+                if sector_pchg < -1.0 and stock_pchg > 1.0:
+                    sig.add(20, f"Relative Strength: Decoupling! Stock {stock_pchg:.1f}% vs {stock_sector} {sector_pchg:.1f}%")
+
         # ── Apply Intraday Theories (Only active on Hourly Scans) ─────────────
         if intraday_df is not None and not intraday_df.empty:
-            self._apply_intraday_theories(sig, daily_df, intraday_df)
+            self._apply_intraday_theories(sig, daily_df, intraday_df, market_context)
 
         sig.indicator_messages["Lookback Trend (7/30/90d)"] = (
             f"{sig.chg_7d_pct:.2f}% / {sig.chg_30d_pct:.2f}% / {sig.chg_90d_pct:.2f}%"
@@ -545,7 +578,7 @@ class SignalEngine:
             reverse=True,
         )
 
-    def _apply_intraday_theories(self, sig: StockSignal, daily_df: pd.DataFrame, df_5m: pd.DataFrame):
+    def _apply_intraday_theories(self, sig: StockSignal, daily_df: pd.DataFrame, df_5m: pd.DataFrame, market_context: dict = None):
         try:
             # Resample 5m to 15m and 1h for Multi-Timeframe Alignment
             df_15m = df_5m.resample('15min').agg({'open':'first', 'high':'max', 'low':'min', 'close':'last', 'volume':'sum'}).dropna()
@@ -583,8 +616,19 @@ class SignalEngine:
             orb_df = df_today.between_time("09:15", "09:30")
             if not orb_df.empty:
                 orb_high = orb_df['high'].max()
+                orb_low = orb_df['low'].min()
                 if current_price > orb_high and current_price > vpoc:
                     sig.add(W.get("orb_vpoc_bullish", 15), "ORB Breakout + Above VPOC")
+                    
+                    # 1. Capital Migration (Intraday ORB Precision)
+                    if market_context:
+                        sectors = market_context.get("sector_constituents", {})
+                        indices = market_context.get("indices", {})
+                        is_safe_haven = (sig.symbol in sectors.get("NIFTY FMCG", []) or sig.symbol in sectors.get("NIFTY PHARMA", []))
+                        it_pchg = indices.get("NIFTY IT", {}).get("pchg", 0.0)
+                        if is_safe_haven and it_pchg < -0.5:
+                            sig.add(20, f"Capital Migration: IT weak ({it_pchg:.1f}%) + {sig.symbol} ORB Breakout")
+                            
                 elif current_price > orb_high and current_price < vpoc:
                     sig.subtract(10, "ORB Breakout but Below VPOC (Sell Pressure)")
                     

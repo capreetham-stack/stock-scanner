@@ -367,11 +367,11 @@ class Indicators:
         out["supertrend"]           = st_df["supertrend"]
         out["supertrend_direction"] = st_df["direction"]
 
-        # VWAP (if intraday – uses time index; for daily use close as proxy)
+        # VWAP (only valid for intraday with time index)
         if hasattr(out.index, "hour"):
             out["vwap"] = Indicators.vwap(out["high"], out["low"], out["close"], out["volume"])
         else:
-            out["vwap"] = Indicators.ema(out["close"], 20)  # proxy for daily
+            out["vwap"] = np.nan
 
         # Volume
         out["vol_sma"]   = Indicators.volume_sma(out["volume"])
