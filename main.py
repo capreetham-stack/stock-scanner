@@ -238,7 +238,7 @@ def run_scan(args) -> None:
         else:
             try:
                 sync = GoogleSheetSync(sheet_target, gsheet_creds)
-                ws_prefix = "HOURLY" if args.run_type == "hourly" else "PRE915"
+                ws_prefix = "HOURLY" if args.run_type == "hourly" else "PRE_MARKET"
                 ws_title = sync.sync_daily(result, prefix=ws_prefix)
                 if ws_title:
                     print(f"  GoogleSheet → {ws_title}")
@@ -262,6 +262,7 @@ def scheduled_run(args) -> None:
 
 def start_scheduler(args) -> None:
     scan_time = cfg.PRE_MARKET_START   # "09:00"
+    
     schedule.every().day.at(scan_time).do(scheduled_run, args=args)
     logging.info("Scheduler started — will run at %s on weekdays. "
                  "Press Ctrl+C to stop.", scan_time)

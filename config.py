@@ -35,7 +35,7 @@ WATCHLIST = list(dict.fromkeys(NIFTY50 + FNO_EXTRAS))  # deduplicated
 
 # ─── Time Settings ────────────────────────────────────────────────────────────
 MARKET_OPEN_TIME  = "09:15"
-PRE_MARKET_START  = "09:00"
+PRE_MARKET_START  = "09:45"
 SCAN_CUTOFF_TIME  = "09:14"   # Scanner must finish by this time
 MID_DAY_SCAN_TIME = "12:15"   # 12:15 PM IST Mid-day run
 

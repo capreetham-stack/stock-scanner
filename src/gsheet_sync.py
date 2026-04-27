@@ -130,19 +130,10 @@ class GoogleSheetSync:
         IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
         existing = {ws.title for ws in sh.worksheets()}
-        if prefix == "HOURLY":
-            date_title = dt.datetime.now(IST).strftime("%Y-%m-%d")
-            final_title = f"HOURLY_{date_title}"
-            is_new = final_title not in existing
-        else:
-            date_title = dt.datetime.now(IST).strftime("%Y-%m-%d")
-            ws_title = f"{prefix}_{date_title}"
-            final_title = ws_title
-            idx = 1
-            while final_title in existing:
-                idx += 1
-                final_title = f"{ws_title}_{idx}"
-            is_new = True
+        
+        date_title = dt.datetime.now(IST).strftime("%Y-%m-%d")
+        final_title = f"{prefix}_{date_title}"
+        is_new = final_title not in existing
 
         if is_new:
             ws = sh.add_worksheet(title=final_title, rows=100, cols=20)
@@ -207,10 +198,19 @@ class GoogleSheetSync:
         old_signals = [s for s in all_signals if s.symbol in old_symbols]
         new_signals = [s for s in buy_list if s.symbol not in old_symbols]
         
-        def _build_hourly_row(idx, s_dict, moved_pct):
+        def _build_hourly_row(idx, s_dict, prev_price, curr_price):
             r = self._format_morning_row(idx, s_dict)
-            # Explicitly force Run Time and Hourly Moved % to the front of the columns
-            ordered = {"Run Time": run_time_str, "Hourly Moved %": moved_pct}
+            ordered = {"Run Time": run_time_str}
+            
+            if prev_price is not None and prev_price > 0:
+                moved_abs = curr_price - prev_price
+                moved_pct = (moved_abs / prev_price) * 100
+                ordered["Prev Price"] = prev_price
+                ordered["Hourly Move"] = f"{moved_abs:+.2f} ({self._fmt_pct(moved_pct)})"
+            else:
+                ordered["Prev Price"] = "N/A"
+                ordered["Hourly Move"] = "NEW"
+                
             ordered.update(r)
             return ordered
 
@@ -222,15 +222,19 @@ class GoogleSheetSync:
             except ValueError:
                 curr_price = 0.0
             prev = prev_prices.get(s.symbol)
-            moved = self._fmt_pct((curr_price - prev) / prev * 100) if prev and prev > 0 else "N/A"
-            old_rows_data.append(_build_hourly_row(idx, s_dict, moved))
+            old_rows_data.append(_build_hourly_row(idx, s_dict, prev, curr_price))
             
         new_rows_data = []
         for idx, s in enumerate(new_signals, 1):
-            new_rows_data.append(_build_hourly_row(idx, s.to_dict(), "NEW"))
+            s_dict = s.to_dict()
+            try:
+                curr_price = float(str(s_dict.get("current_price", 0)).replace(',', ''))
+            except ValueError:
+                curr_price = 0.0
+            new_rows_data.append(_build_hourly_row(idx, s_dict, None, curr_price))
             
         # Ensure we always have headers, even if empty
-        sample_row = old_rows_data[0] if old_rows_data else (new_rows_data[0] if new_rows_data else _build_hourly_row(1, {"symbol": "NONE", "buy_heading": "No stocks met criteria"}, ""))
+        sample_row = old_rows_data[0] if old_rows_data else (new_rows_data[0] if new_rows_data else _build_hourly_row(1, {"symbol": "NONE", "buy_heading": "No stocks met criteria"}, None, 0.0))
         headers = list(sample_row.keys())
         
         if is_new:
