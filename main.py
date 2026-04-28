@@ -176,6 +176,16 @@ def get_watchlist(choice: str) -> list[str]:
 # ─── Single scan run ──────────────────────────────────────────────────────────
 
 def run_scan(args) -> None:
+    # ── Evening mode (EOD follow-up) ──────────────────────────────────────────
+    if args.run_type == "evening":
+        logging.info("Running EOD follow-up (Evening mode)")
+        try:
+            from scripts.evening_append_to_morning import main as run_eod_append
+            run_eod_append()
+        except Exception as exc:
+            logging.exception("EOD follow-up failed: %s", exc)
+        return
+
     reporter = Reporter()
 
     # ── Single symbol mode ────────────────────────────────────────────────────
@@ -252,20 +262,59 @@ def is_weekday() -> bool:
     return datetime.datetime.now().weekday() < 5   # Mon–Fri
 
 
-def scheduled_run(args) -> None:
+def scheduled_run(args, run_type_override=None) -> None:
     if is_weekday():
-        logging.info("Scheduled scan triggered.")
-        run_scan(args)
+        rtype = run_type_override or args.run_type
+        logging.info("Scheduled %s scan triggered.", rtype.upper())
+        
+        # Temporarily apply the run type so the scanner and GSheet know which logic to use
+        original_type = args.run_type
+        args.run_type = rtype
+        try:
+            run_scan(args)
+        finally:
+            args.run_type = original_type
     else:
         logging.info("Weekend — skipping scan.")
 
 
+def scheduled_eod(args) -> None:
+    if is_weekday():
+        logging.info("Scheduled EOD follow-up triggered.")
+        try:
+            from scripts.evening_append_to_morning import main as run_eod_append
+            run_eod_append()
+        except Exception as exc:
+            logging.exception("EOD follow-up failed: %s", exc)
+    else:
+        logging.info("Weekend — skipping EOD follow-up.")
+
+
 def start_scheduler(args) -> None:
-    scan_time = cfg.PRE_MARKET_START   # "09:00"
+    scan_time = cfg.PRE_MARKET_START
     
-    schedule.every().day.at(scan_time).do(scheduled_run, args=args)
-    logging.info("Scheduler started — will run at %s on weekdays. "
-                 "Press Ctrl+C to stop.", scan_time)
+    # 1. Schedule the morning pre-market scan
+    schedule.every().day.at(scan_time).do(scheduled_run, args=args, run_type_override="morning")
+    
+    # 2. Schedule the hourly scans specifically for market hours
+    market_hours = ["10:00", "11:00", "12:00", "13:00", "14:00", "15:00"]
+    for h in market_hours:
+        schedule.every().day.at(h).do(scheduled_run, args=args, run_type_override="hourly")
+        
+    # 3. Schedule the EOD follow-up after market close
+    eod_time = "15:45"
+    schedule.every().day.at(eod_time).do(scheduled_eod, args=args)
+        
+    logging.info("Scheduler started in FULLY AUTOMATIC mode. Press Ctrl+C to stop.")
+    logging.info("  -> Pre-Market Scan : %s", scan_time)
+    logging.info("  -> Hourly Scans    : %s", ", ".join(market_hours))
+    logging.info("  -> EOD Follow-up   : %s", eod_time)
+    
+    # Execute once immediately to bootstrap tracking if explicitly requested
+    if args.run_type == "hourly":
+        logging.info("Bootstrapping an immediate hourly scan...")
+        scheduled_run(args, run_type_override="hourly")
+
     while True:
         schedule.run_pending()
         time.sleep(30)
