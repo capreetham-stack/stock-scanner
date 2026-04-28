@@ -2,14 +2,14 @@ name: Daily NSE Scan
 
 on:
   schedule:
-    # 03:30 UTC = 09:00 IST, Monday-Friday
-    - cron: "30 3 * * 1-5"
-    # 06:45 UTC = 12:15 IST, Monday-Friday (Mid-day scan)
-    - cron: "45 6 * * 1-5"
-    # 11:30 UTC = 17:00 IST, Monday-Friday
-    - cron: "30 11 * * 1-5"
-    # 04:30 to 09:30 UTC = 10:00 to 15:00 IST hourly, Monday-Friday
-    - cron: "30 4-9 * * 1-5"
+    # 04:12 UTC = 09:42 IST, Monday-Friday (Morning scan off-peak)
+    - cron: "12 4 * * 1-5"
+    # 06:43 UTC = 12:13 IST, Monday-Friday (Mid-day scan off-peak)
+    - cron: "43 6 * * 1-5"
+    # 10:13 UTC = 15:43 IST, Monday-Friday (Evening follow-up off-peak)
+    - cron: "13 10 * * 1-5"
+    # 04:28 to 09:28 UTC = 09:58 to 14:58 IST hourly (Off-peak!)
+    - cron: "28 4-9 * * 1-5"
   push:
     branches:
       - main
@@ -90,15 +90,15 @@ jobs:
           fi
           echo "GOOGLE_SHEET_URL is present" >> logs/github-actions.log
           RUN_TYPE="${{ github.event.inputs.run_type }}"
-          if [ "${{ github.event.schedule }}" = "30 11 * * 1-5" ] || [ "$RUN_TYPE" = "evening" ]; then
+          if [ "${{ github.event.schedule }}" = "13 10 * * 1-5" ] || [ "$RUN_TYPE" = "evening" ]; then
             echo "Running evening follow-up..." >> logs/github-actions.log
             python scripts/evening_followup.py 2>&1 | tee -a logs/github-actions.log
             echo "Appending evening movement section to morning worksheet..." >> logs/github-actions.log
             python scripts/evening_append_to_morning.py 2>&1 | tee -a logs/github-actions.log
-          elif [ "${{ github.event.schedule }}" = "45 6 * * 1-5" ] || [ "$RUN_TYPE" = "midday" ]; then
+          elif [ "${{ github.event.schedule }}" = "43 6 * * 1-5" ] || [ "$RUN_TYPE" = "midday" ]; then
             echo "Running mid-day scanner..." >> logs/github-actions.log
             python main.py --sync-gsheet --plain --watchlist NIFTY500 2>&1 | tee -a logs/github-actions.log
-          elif [ "${{ github.event.schedule }}" = "30 4-9 * * 1-5" ] || [ "$RUN_TYPE" = "hourly" ]; then
+          elif [ "${{ github.event.schedule }}" = "28 4-9 * * 1-5" ] || [ "$RUN_TYPE" = "hourly" ]; then
             echo "Running hourly scanner..." >> logs/github-actions.log
             python main.py --sync-gsheet --plain --watchlist NIFTY500 --run-type hourly 2>&1 | tee -a logs/github-actions.log
           else
