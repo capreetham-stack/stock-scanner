@@ -4,15 +4,10 @@ on:
   schedule:
     # 04:12 UTC = 09:42 IST, Monday-Friday (Morning scan off-peak)
     - cron: "12 4 * * 1-5"
-    # 06:43 UTC = 12:13 IST, Monday-Friday (Mid-day scan off-peak)
-    - cron: "43 6 * * 1-5"
     # 10:13 UTC = 15:43 IST, Monday-Friday (Evening follow-up off-peak)
     - cron: "13 10 * * 1-5"
     # 04:28 to 09:28 UTC = 09:58 to 14:58 IST hourly (Off-peak!)
     - cron: "28 4-9 * * 1-5"
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       run_type:
@@ -33,8 +28,6 @@ jobs:
   run-scan:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout
@@ -92,11 +85,9 @@ jobs:
           echo "Google Sheet Target is present" >> logs/github-actions.log
           RUN_TYPE="${{ github.event.inputs.run_type }}"
           if [ -z "$RUN_TYPE" ]; then
-            if [ "${{ github.event.schedule }}" = "13 10 * * 1-5" ]; then
+            if [[ "${{ github.event.schedule }}" == *"13 10"* ]]; then
               RUN_TYPE="evening"
-            elif [ "${{ github.event.schedule }}" = "43 6 * * 1-5" ]; then
-              RUN_TYPE="midday"
-            elif [ "${{ github.event.schedule }}" = "28 4-9 * * 1-5" ]; then
+            elif [[ "${{ github.event.schedule }}" == *"4-9"* ]]; then
               RUN_TYPE="hourly"
             else
               RUN_TYPE="morning"
