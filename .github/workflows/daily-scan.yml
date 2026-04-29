@@ -38,7 +38,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Prepare runtime folders
         run: |
@@ -51,7 +51,7 @@ jobs:
           } > logs/github-actions.log
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
@@ -65,34 +65,35 @@ jobs:
 
       - name: Create credentials file from secret
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+          CREDS_1: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+          CREDS_2: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
         run: |
           set -euo pipefail
-          if [ -z "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
-            echo "Missing secret: GOOGLE_APPLICATION_CREDENTIALS" | tee -a logs/github-actions.log
-            echo "Missing secret: GOOGLE_APPLICATION_CREDENTIALS"
+          FINAL_CREDS="${CREDS_1:-$CREDS_2}"
+          if [ -z "$FINAL_CREDS" ]; then
+            echo "Missing secret: GOOGLE_APPLICATION_CREDENTIALS or JSON" | tee -a logs/github-actions.log
             exit 1
           fi
-          printf "%s" "$GOOGLE_APPLICATION_CREDENTIALS" > .github/secrets/google-service-account.json
+          printf "%s" "$FINAL_CREDS" > .github/secrets/google-service-account.json
           python -m json.tool .github/secrets/google-service-account.json > /dev/null 2>> logs/github-actions.log
           echo "Credentials JSON validated successfully" >> logs/github-actions.log
 
       - name: Run morning scanner or evening follow-up
         env:
           GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
+          GOOGLE_SHEET_KEY: ${{ secrets.GOOGLE_SHEET_KEY }}
           GOOGLE_APPLICATION_CREDENTIALS: .github/secrets/google-service-account.json
         run: |
           set -euo pipefail
-          if [ -z "$GOOGLE_SHEET_URL" ]; then
-            echo "Missing secret: GOOGLE_SHEET_URL" | tee -a logs/github-actions.log
-            echo "Missing secret: GOOGLE_SHEET_URL"
+          if [ -z "$GOOGLE_SHEET_URL" ] && [ -z "${GOOGLE_SHEET_KEY:-}" ]; then
+            echo "Missing secret: GOOGLE_SHEET_URL or GOOGLE_SHEET_KEY" | tee -a logs/github-actions.log
             exit 1
           fi
-          echo "GOOGLE_SHEET_URL is present" >> logs/github-actions.log
+          echo "Google Sheet Target is present" >> logs/github-actions.log
           RUN_TYPE="${{ github.event.inputs.run_type }}"
           if [ "${{ github.event.schedule }}" = "13 10 * * 1-5" ] || [ "$RUN_TYPE" = "evening" ]; then
             echo "Running evening follow-up..." >> logs/github-actions.log
-            python scripts/evening_followup.py 2>&1 | tee -a logs/github-actions.log
+            python scripts/evening_followup.py 2>&1 | tee -a logs/github-actions.log || true
             echo "Appending evening movement section to morning worksheet..." >> logs/github-actions.log
             python scripts/evening_append_to_morning.py 2>&1 | tee -a logs/github-actions.log
           elif [ "${{ github.event.schedule }}" = "43 6 * * 1-5" ] || [ "$RUN_TYPE" = "midday" ]; then
@@ -109,7 +110,7 @@ jobs:
 
       - name: Upload scan output artifacts
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: nse-scan-output
           path: |
