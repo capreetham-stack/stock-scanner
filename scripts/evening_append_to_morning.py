@@ -122,7 +122,7 @@ def main() -> None:
         raise RuntimeError("Missing/invalid GOOGLE_APPLICATION_CREDENTIALS path")
 
     today = dt.datetime.now(IST).strftime("%Y-%m-%d")
-    morning_prefix = f"PRE915_{today}"
+    morning_prefix = f"PRE_MARKET_{today}"
 
     sh = open_sheet(sheet_target, creds_path)
     ws = pick_latest_tab(sh, morning_prefix)

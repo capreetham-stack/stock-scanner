@@ -243,7 +243,7 @@ class GoogleSheetSync:
             if new_rows_data:
                 matrix.extend([[self._sheet_cell_value(r.get(h, "")) for h in headers] for r in new_rows_data])
             else:
-                dummy = _build_hourly_row(1, {"symbol": "NONE", "buy_heading": "No stocks met criteria"}, "")
+                dummy = _build_hourly_row(1, {"symbol": "NONE", "buy_heading": "No stocks met criteria"}, None, 0.0)
                 matrix.append([self._sheet_cell_value(dummy.get(h, "")) for h in headers])
                 
             ws.update(range_name="A1", values=matrix, value_input_option="RAW")
