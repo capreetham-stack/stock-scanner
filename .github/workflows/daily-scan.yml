@@ -7,7 +7,7 @@ on:
     # 10:13 UTC = 15:43 IST, Monday-Friday (Evening follow-up off-peak)
     - cron: "13 10 * * 1-5"
     # 04:28 to 09:28 UTC = 09:58 to 14:58 IST hourly (Off-peak!)
-    - cron: "28 4-9 * * 1-5"
+    - cron: "28 4,5,6,7,8,9 * * 1-5"
   workflow_dispatch:
     inputs:
       run_type:
@@ -83,11 +83,12 @@ jobs:
             exit 1
           fi
           echo "Google Sheet Target is present" >> logs/github-actions.log
-          RUN_TYPE="${{ github.event.inputs.run_type }}"
+          RUN_TYPE="${{ inputs.run_type || '' }}"
           if [ -z "$RUN_TYPE" ]; then
-            if [[ "${{ github.event.schedule }}" == *"13 10"* ]]; then
+            SCHEDULE="${{ github.event.schedule || '' }}"
+            if [[ "$SCHEDULE" =~ ^13 ]]; then
               RUN_TYPE="evening"
-            elif [[ "${{ github.event.schedule }}" == *"4-9"* ]]; then
+            elif [[ "$SCHEDULE" =~ ^28 ]]; then
               RUN_TYPE="hourly"
             else
               RUN_TYPE="morning"
