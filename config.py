@@ -70,6 +70,12 @@ VOLUME_AVG_PERIOD   = 20
 VOLUME_SURGE_MULT   = 1.5     # today's vol > 1.5× avg ⇒ surge
 RVOL_HIGH_CONVICTION = 1.5    # strict RVOL floor for high-conviction entries
 
+# ─── Market-Down Safety Rules ────────────────────────────────────────────────
+MARKET_DOWN_MIN_STOCK_GAIN_PCT = 0.5  # stock must still be up at least this much when market is down
+MARKET_DOWN_MIN_RVOL          = 1.5  # require strong relative volume on down-market picks
+MARKET_DOWN_MAX_WARNINGS      = 1    # limit negative caution flags in down-market conditions
+MARKET_DOWN_SECTOR_BONUS      = 10   # extra weight for resilient sectors when market is weak
+
 # ─── Trend Strength (ADX) ───────────────────────────────────────────────────
 ADX_STRONG_MIN      = 25      # ADX must be above this
 

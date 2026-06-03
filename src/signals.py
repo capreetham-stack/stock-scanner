@@ -79,6 +79,8 @@ class StockSignal:
         self.buy_qty        = 0.0
         self.sell_qty       = 0.0
         self.buy_sell_ratio = None
+        self.stock_pchg           = 0.0
+        self.vwap                 = 0.0
         # zone info
         self.nearest_demand_zone = None
         self.nearest_supply_zone = None
@@ -265,6 +267,7 @@ class SignalEngine:
         st_msg = "Supertrend: bullish" if sig.supertrend_dir == 1 else "Supertrend: bearish"
 
         vwap_val = float(row.get("vwap", sig.current_price))
+        sig.vwap = vwap_val
         vwap_dist_pct_msg = (
             abs(sig.current_price - vwap_val) / vwap_val * 100
             if vwap_val else 0.0
@@ -360,6 +363,7 @@ class SignalEngine:
 
         # Price vs VWAP (strict pullback, avoid chasing)
         vwap_val = float(row.get("vwap", sig.current_price))
+        sig.vwap = vwap_val
         vwap_dist_pct = (
             abs(sig.current_price - vwap_val) / vwap_val * 100
             if vwap_val else 0.0
@@ -527,20 +531,36 @@ class SignalEngine:
 
             it_pchg = indices.get("NIFTY IT", {}).get("pchg", 0.0)
             bank_pchg = indices.get("NIFTY BANK", {}).get("pchg", 0.0)
-            
-            stock_pchg = (sig.current_price - sig.prev_close) / sig.prev_close * 100 if sig.prev_close else 0.0
+            nifty_pct = self._find_index_pct(indices, ["NIFTY", "NIFTY 50", "NIFTY 50 PR"])
+            if nifty_pct is None:
+                nifty_pct = market_context.get("preopen_nifty", {}).get("pchg", 0.0)
 
-            # 1. Capital Migration (Negative Correlation Hedge - Daily fallback)
+            stock_pchg = (sig.current_price - sig.prev_close) / sig.prev_close * 100 if sig.prev_close else 0.0
+            sig.stock_pchg = stock_pchg
+
+            # 1. Market down relative strength
+            if nifty_pct is not None and nifty_pct < 0:
+                if stock_pchg >= cfg.MARKET_DOWN_MIN_STOCK_GAIN_PCT:
+                    sig.add(20, f"Market down relative strength: stock up {stock_pchg:.1f}% vs NIFTY down {nifty_pct:.1f}%")
+                elif stock_pchg > 0:
+                    sig.add(8, f"Market down relative strength: stock modestly up {stock_pchg:.1f}% vs NIFTY down {nifty_pct:.1f}%")
+
+            # 2. Resilient sector bonus
+            resilient_sectors = ("NIFTY IT", "NIFTY METAL")
+            if stock_sector in resilient_sectors and nifty_pct is not None and nifty_pct < 0 and sig.vol_ratio >= cfg.MARKET_DOWN_MIN_RVOL:
+                sig.add(cfg.MARKET_DOWN_SECTOR_BONUS, f"Resilient sector ({stock_sector}) in weak market")
+
+            # 3. Capital Migration (Negative Correlation Hedge - Daily fallback)
             if stock_sector in ["NIFTY FMCG", "NIFTY PHARMA"]:
                 if it_pchg < -0.5 and stock_pchg > 0:
                     sig.add(10, f"Capital Migration: IT bleeding ({it_pchg:.1f}%), {stock_sector} gaining")
 
-            # 2. Weightage Reality Check
+            # 4. Weightage Reality Check
             if bank_pchg < -0.5 and it_pchg < -0.5:
                 if sig.vol_ratio < 3.0:
                     sig.subtract(25, f"Weightage Gravity: Bank ({bank_pchg:.1f}%) & IT ({it_pchg:.1f}%) bleeding. Needs high RVOL.")
 
-            # 3. Relative Strength Scan (Stock vs Sector Decoupling)
+            # 5. Relative Strength Scan (Stock vs Sector Decoupling)
             if stock_sector:
                 sector_pchg = indices.get(stock_sector, {}).get("pchg", 0.0)
                 if sector_pchg < -1.0 and stock_pchg > 1.0:
@@ -570,13 +590,50 @@ class SignalEngine:
 
         return sig
 
-    def rank(self, signals: list[StockSignal]) -> list[StockSignal]:
-        """Sort by score descending, then filter by MIN_SCORE_TO_BUY."""
-        return sorted(
-            [s for s in signals if s.score >= cfg.MIN_SCORE_TO_BUY],
-            key=lambda s: s.score,
-            reverse=True,
-        )
+    def rank(self, signals: list[StockSignal], market_context: dict | None = None) -> list[StockSignal]:
+        """Sort by score descending, filter by MIN_SCORE_TO_BUY, and apply market-down safety filters."""
+        candidates = [s for s in signals if s.score >= cfg.MIN_SCORE_TO_BUY]
+        if market_context:
+            candidates = [s for s in candidates if self._passes_market_down_filters(s, market_context)]
+        return sorted(candidates, key=lambda s: s.score, reverse=True)
+
+    @staticmethod
+    def _find_index_pct(indices: dict, names: list[str]) -> float | None:
+        for name in names:
+            data = indices.get(name)
+            if isinstance(data, dict) and data.get("pchg") is not None:
+                return data["pchg"]
+        return None
+
+    def _passes_market_down_filters(self, sig: StockSignal, market_context: dict) -> bool:
+        indices = market_context.get("indices", {})
+        nifty_pct = self._find_index_pct(indices, ["NIFTY", "NIFTY 50", "NIFTY 50 PR"])
+        if nifty_pct is None:
+            nifty_pct = market_context.get("preopen_nifty", {}).get("pchg")
+        if nifty_pct is None or nifty_pct >= 0:
+            return True
+
+        if sig.stock_pchg <= 0:
+            return False
+        if sig.vol_ratio < cfg.MARKET_DOWN_MIN_RVOL:
+            return False
+        if sig.supertrend_dir != 1:
+            return False
+        if sig.current_price < sig.vwap:
+            return False
+        if sig.adx < cfg.ADX_STRONG_MIN:
+            return False
+
+        bad_warnings = [
+            w for w in sig.warnings
+            if "RVOL below" in w or "Weak trend ADX" in w or "Price below VWAP" in w or "Gap down" in w
+        ]
+        if bad_warnings:
+            return False
+        if len(sig.warnings) > cfg.MARKET_DOWN_MAX_WARNINGS:
+            return False
+
+        return True
 
     def _apply_intraday_theories(self, sig: StockSignal, daily_df: pd.DataFrame, df_5m: pd.DataFrame, market_context: dict = None):
         try:

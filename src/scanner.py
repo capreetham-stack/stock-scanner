@@ -86,6 +86,7 @@ class PreMarketScanner:
                 "NIFTY FMCG": self._fetcher.get_index_constituents("NIFTY FMCG"),
                 "NIFTY PHARMA": self._fetcher.get_index_constituents("NIFTY PHARMA"),
                 "NIFTY BANK": self._fetcher.get_index_constituents("NIFTY BANK"),
+                "NIFTY METAL": self._fetcher.get_index_constituents("NIFTY METAL"),
             }
         except Exception as e:
             logger.debug("sector constituents failed: %s", e)
@@ -196,12 +197,13 @@ class PreMarketScanner:
                     skipped += 1
 
         # 3. Rank + filter
-        buy_list = self._engine.rank(all_signals)[:top_n]
+        qualified = self._engine.rank(all_signals, market_context=ctx)
+        buy_list = qualified[:top_n]
 
         elapsed = (datetime.datetime.now() - start_t).seconds
         logger.info("=== SCAN COMPLETE in %ds | %d scanned | %d qualifies | "
                     "%d in top list ===",
-                    elapsed, len(all_signals), len(self._engine.rank(all_signals)),
+                    elapsed, len(all_signals), len(qualified),
                     len(buy_list))
 
         return {
@@ -211,7 +213,7 @@ class PreMarketScanner:
             "buy_list":       buy_list,
             "stats": {
                 "scanned":   len(all_signals),
-                "qualified": len(self._engine.rank(all_signals)),
+                "qualified": len(qualified),
                 "skipped":   skipped,
             },
         }
