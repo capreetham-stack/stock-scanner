@@ -6,8 +6,8 @@ on:
     - cron: "12 4 * * 1-5"
     # 10:13 UTC = 15:43 IST, Monday-Friday (Evening follow-up off-peak)
     - cron: "13 10 * * 1-5"
-    # 04:28 to 09:28 UTC = 09:58 to 14:58 IST hourly (Off-peak!)
-    - cron: "28 4,5,6,7,8,9 * * 1-5"
+    # Every hour at :28 UTC, Monday-Friday (09:58 to 14:58 IST when converted from UTC)
+    - cron: "28 * * * 1-5"
   workflow_dispatch:
     inputs:
       run_type:
@@ -83,16 +83,21 @@ jobs:
             exit 1
           fi
           echo "Google Sheet Target is present" >> logs/github-actions.log
-          RUN_TYPE="${{ inputs.run_type || '' }}"
-          if [ -z "$RUN_TYPE" ]; then
+
+          # For scheduled runs, determine type from cron. For manual runs, use the input.
+          if [ "${{ github.event_name }}" = "schedule" ]; then
             SCHEDULE="${{ github.event.schedule || '' }}"
-            if [[ "$SCHEDULE" =~ ^13 ]]; then
+            # Use awk to reliably get the minute field from the cron string
+            SCHEDULE_MIN=$(echo "$SCHEDULE" | awk '{print $1}')
+            if [ "$SCHEDULE_MIN" = "13" ]; then
               RUN_TYPE="evening"
-            elif [[ "$SCHEDULE" =~ ^28 ]]; then
+            elif [ "$SCHEDULE_MIN" = "28" ]; then
               RUN_TYPE="hourly"
             else
               RUN_TYPE="morning"
             fi
+          else
+            RUN_TYPE="${{ inputs.run_type || 'morning' }}"
           fi
           echo "Executing scanner with run-type: $RUN_TYPE" >> logs/github-actions.log
           python main.py --sync-gsheet --plain --watchlist NIFTY500 --run-type "$RUN_TYPE" 2>&1 | tee -a logs/github-actions.log
