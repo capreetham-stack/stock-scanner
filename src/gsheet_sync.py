@@ -142,17 +142,22 @@ class GoogleSheetSync:
             ws = sh.worksheet(final_title)
             existing_data = ws.get_all_records()
 
-        # Extract previous prices for HOURLY
+        # Extract previous prices and previously recommended symbols for HOURLY
         prev_prices = {}
+        prev_symbols = set()
         if prefix == "HOURLY" and existing_data:
             for row in existing_data:
                 sym = row.get("Symbol")
-                curr_p = row.get("Current Price")
-                if sym and curr_p not in (None, ""):
-                    try:
-                        prev_prices[sym] = float(str(curr_p).replace(',', ''))
-                    except ValueError:
-                        pass
+                if sym:
+                    sym = str(sym).strip().upper()
+                    if sym and sym != "NONE":
+                        prev_symbols.add(sym)
+                        curr_p = row.get("Current Price")
+                        if curr_p not in (None, ""):
+                            try:
+                                prev_prices[sym] = float(str(curr_p).replace(',', ''))
+                            except ValueError:
+                                pass
 
         run_time_str = dt.datetime.now(IST).strftime("%H:%M")
 
@@ -190,13 +195,12 @@ class GoogleSheetSync:
             return final_title
 
         # --- HOURLY RUN LOGIC ---
-        old_symbols = set(prev_prices.keys())
         all_signals = result.get("all_signals", [])
         buy_list = result.get("buy_list", [])
         
         # Split signals into "Old" (previously recommended) and "New" (only new to this hour)
-        old_signals = [s for s in all_signals if s.symbol in old_symbols]
-        new_signals = [s for s in buy_list if s.symbol not in old_symbols]
+        old_signals = [s for s in all_signals if s.symbol in prev_symbols]
+        new_signals = [s for s in buy_list if s.symbol not in prev_symbols]
         
         def _build_hourly_row(idx, s_dict, prev_price, curr_price):
             r = self._format_morning_row(idx, s_dict)

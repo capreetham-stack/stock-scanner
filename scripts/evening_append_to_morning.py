@@ -4,7 +4,7 @@ Append EOD movement summary below the morning recommendations table.
 
 This script does not alter morning recommendation rows/columns.
 It only appends (or refreshes) a section below the existing data in the
-latest PRE915_YYYY-MM-DD worksheet.
+latest PRE_MARKET_YYYY-MM-DD worksheet (legacy PRE915_YYYY-MM-DD is also supported).
 """
 
 from __future__ import annotations
@@ -71,10 +71,11 @@ def open_sheet(sheet_url_or_key: str, creds_path: str):
     return client.open_by_key(extract_sheet_key(sheet_url_or_key))
 
 
-def pick_latest_tab(spreadsheet, prefix: str) -> gspread.Worksheet:
-    tabs = [ws for ws in spreadsheet.worksheets() if ws.title.startswith(prefix)]
+def pick_latest_tab(spreadsheet, prefix: str | list[str]) -> gspread.Worksheet:
+    prefixes = [prefix] if isinstance(prefix, str) else prefix
+    tabs = [ws for ws in spreadsheet.worksheets() if any(ws.title.startswith(p) for p in prefixes)]
     if not tabs:
-        raise RuntimeError(f"No worksheet found with prefix {prefix}")
+        raise RuntimeError(f"No worksheet found with prefix(es) {prefixes}")
     tabs.sort(key=lambda ws: ws.title)
     return tabs[-1]
 
@@ -122,10 +123,10 @@ def main() -> None:
         raise RuntimeError("Missing/invalid GOOGLE_APPLICATION_CREDENTIALS path")
 
     today = dt.datetime.now(IST).strftime("%Y-%m-%d")
-    morning_prefix = f"PRE_MARKET_{today}"
+    morning_prefixes = [f"PRE_MARKET_{today}", f"PRE915_{today}"]
 
     sh = open_sheet(sheet_target, creds_path)
-    ws = pick_latest_tab(sh, morning_prefix)
+    ws = pick_latest_tab(sh, morning_prefixes)
     morning_rows = ws.get_all_records()
     if not morning_rows:
         raise RuntimeError(f"Morning worksheet {ws.title} has no data")

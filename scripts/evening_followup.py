@@ -2,7 +2,7 @@
 """
 Create end-of-day follow-up from morning scan tabs.
 
-Reads today's PRE915_* tab from Google Sheets, fetches latest prices,
+Reads today's PRE_MARKET_* or legacy PRE915_* tab from Google Sheets, fetches latest prices,
 and writes a single combined worksheet:
 - EOD_NEXTDAY_YYYY-MM-DD
 """
@@ -76,10 +76,11 @@ def open_sheet(sheet_url_or_key: str, creds_path: str):
     return client.open_by_key(extract_sheet_key(sheet_url_or_key))
 
 
-def pick_latest_tab(spreadsheet, prefix: str) -> gspread.Worksheet:
-    tabs = [ws for ws in spreadsheet.worksheets() if ws.title.startswith(prefix)]
+def pick_latest_tab(spreadsheet, prefix: str | list[str]) -> gspread.Worksheet:
+    prefixes = [prefix] if isinstance(prefix, str) else prefix
+    tabs = [ws for ws in spreadsheet.worksheets() if any(ws.title.startswith(p) for p in prefixes)]
     if not tabs:
-        raise RuntimeError(f"No worksheet found with prefix {prefix}")
+        raise RuntimeError(f"No worksheet found with prefix(es) {prefixes}")
     tabs.sort(key=lambda ws: ws.title)
     return tabs[-1]
 
@@ -130,10 +131,10 @@ def main() -> None:
         raise RuntimeError("Missing/invalid GOOGLE_APPLICATION_CREDENTIALS path")
 
     today = dt.datetime.now(IST).strftime("%Y-%m-%d")
-    morning_prefix = f"PRE915_{today}"
+    morning_prefixes = [f"PRE_MARKET_{today}", f"PRE915_{today}"]
 
     sh = open_sheet(sheet_target, creds_path)
-    morning_ws = pick_latest_tab(sh, morning_prefix)
+    morning_ws = pick_latest_tab(sh, morning_prefixes)
     morning_rows = morning_ws.get_all_records()
     if not morning_rows:
         raise RuntimeError(f"Morning worksheet {morning_ws.title} has no data")

@@ -297,7 +297,7 @@ def start_scheduler(args) -> None:
     schedule.every().day.at(scan_time).do(scheduled_run, args=args, run_type_override="morning")
     
     # 2. Schedule the hourly scans specifically for market hours
-    market_hours = ["10:00", "11:00", "12:00", "13:00", "14:00", "15:00"]
+    market_hours = ["10:15", "11:15", "12:15", "13:15", "14:15", "15:15"]
     for h in market_hours:
         schedule.every().day.at(h).do(scheduled_run, args=args, run_type_override="hourly")
         

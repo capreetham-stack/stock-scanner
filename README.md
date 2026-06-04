@@ -97,7 +97,8 @@ python main.py --schedule --gsheet-key <YOUR_SHEET_KEY> --gsheet-creds <service_
 1. Create a Google Cloud service account and download the JSON credentials file.
 2. Share your target Google Sheet with the service-account email (Editor access).
 3. Use either `--gsheet-key` (preferred) or `--gsheet-url` with `--gsheet-creds`.
-4. Every run creates a new worksheet tab like `PRE915_YYYY-MM-DD`.
+4. Every run creates a new worksheet tab like `PRE_MARKET_YYYY-MM-DD`.
+   Legacy tabs named `PRE915_YYYY-MM-DD` are still supported by the follow-up scripts.
 
 ---
 
@@ -214,7 +215,8 @@ No manual workflow run is required.
 ### 5. Scheduled runs
 
 The workflow runs automatically Mon-Fri at:
-- `03:30 UTC` (`09:00 IST`): writes `PRE915_YYYY-MM-DD` tab.
+- `03:30 UTC` (`09:00 IST`): writes `PRE_MARKET_YYYY-MM-DD` tab.
+  Legacy tabs named `PRE915_YYYY-MM-DD` are also supported.
 - `11:30 UTC` (`17:00 IST`): reads morning tab and writes:
   - `EOD_NEXTDAY_YYYY-MM-DD` (EOD performance + next-day recommendation in one tab)
 

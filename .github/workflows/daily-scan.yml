@@ -6,8 +6,8 @@ on:
     - cron: "12 4 * * 1-5"
     # 10:13 UTC = 15:43 IST, Monday-Friday (Evening follow-up off-peak)
     - cron: "13 10 * * 1-5"
-    # Every hour at :28 UTC, Monday-Friday (09:58 to 14:58 IST when converted from UTC)
-    - cron: "28 * * * 1-5"
+    # Hourly scans at 04:45-09:45 UTC = 10:15-15:15 IST, Monday-Friday
+    - cron: "45 4-9 * * 1-5"
   workflow_dispatch:
     inputs:
       run_type:
@@ -91,7 +91,7 @@ jobs:
             SCHEDULE_MIN=$(echo "$SCHEDULE" | awk '{print $1}')
             if [ "$SCHEDULE_MIN" = "13" ]; then
               RUN_TYPE="evening"
-            elif [ "$SCHEDULE_MIN" = "28" ]; then
+            elif [ "$SCHEDULE_MIN" = "28" ] || [ "$SCHEDULE_MIN" = "45" ]; then
               RUN_TYPE="hourly"
             else
               RUN_TYPE="morning"
