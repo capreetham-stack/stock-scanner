@@ -174,6 +174,41 @@ class PreMarketScanner:
         if pcr:
             logger.info("NIFTY PCR: %.2f (%s)", pcr, "BULLISH" if pcr > 1 else "BEARISH")
 
+        # Helper: try to extract a quick NIFTY percent move from global snapshot
+        def _extract_nifty_pct(global_snapshot: dict | list) -> float | None:
+            rows = []
+            if isinstance(global_snapshot, dict):
+                if isinstance(global_snapshot.get("data"), list):
+                    rows = global_snapshot.get("data", [])
+                elif isinstance(global_snapshot.get("indices"), list):
+                    rows = global_snapshot.get("indices", [])
+            elif isinstance(global_snapshot, list):
+                rows = global_snapshot
+
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                name = " ".join([
+                    str(row.get("index", "")),
+                    str(row.get("indexSymbol", "")),
+                    str(row.get("key", "")),
+                    str(row.get("name", "")),
+                    str(row.get("symbol", "")),
+                ]).upper()
+                if "NIFTY" not in name:
+                    continue
+                for field in ("perChange", "pChange", "percentChange", "changePercent"):
+                    if field in row:
+                        try:
+                            return float(row.get(field) or 0.0)
+                        except Exception:
+                            continue
+            return None
+
+        nifty_pct = _extract_nifty_pct(ctx.get("global", {}) or {})
+        if nifty_pct is not None:
+            logger.info("NIFTY pct (global snapshot): %.2f", nifty_pct)
+
         # 2. Parallel symbol analysis
         all_signals : list[StockSignal] = []
         skipped = 0
@@ -206,11 +241,108 @@ class PreMarketScanner:
                     elapsed, len(all_signals), len(qualified),
                     len(buy_list))
 
+        # If NIFTY is down, run a focused analysis on top gainers (NIFTY 500)
+        top_gainers_result = {}
+        try:
+            # Only run top-gainers fallback during hourly scans
+            if self.run_type == "hourly" and nifty_pct is not None and nifty_pct < 0:
+                logger.info("NIFTY is down (%.2f%%). Running fallback scan on top gainers (hourly run).", nifty_pct)
+            else:
+                if nifty_pct is not None and nifty_pct < 0:
+                    logger.info("NIFTY is down (%.2f%%) but skipping top-gainers fallback (not an hourly run).", nifty_pct)
+                # proceed only if hourly and negative (handled above)
+            if not (self.run_type == "hourly" and nifty_pct is not None and nifty_pct < 0):
+                # Skip fallback
+                top_gainers_result = {}
+            else:
+                logger.info("Proceeding with top-gainers fallback (hourly).")
+                gainers_payload = self._fetcher.get_gainers_losers("NIFTY 500") or {}
+                # gainers_payload already obtained above when proceeding
+                # Try to extract symbols from common payload shapes, but only include gainers (positive pct)
+                symbols = []
+                def _row_pchg(r):
+                    for field in ("pChange", "percentChange", "perChange", "changePercent"):
+                        if isinstance(r, dict) and field in r:
+                            try:
+                                return float(r.get(field) or 0.0)
+                            except Exception:
+                                return 0.0
+                    # metadata shapes
+                    if isinstance(r, dict) and "metadata" in r and isinstance(r.get("metadata"), dict):
+                        for k in ("pChange", "percentChange"):
+                            try:
+                                return float(r["metadata"].get(k) or 0.0)
+                            except Exception:
+                                continue
+                    return 0.0
+
+                if isinstance(gainers_payload, dict):
+                    data = gainers_payload.get("data") or gainers_payload.get("gainers") or []
+                    if isinstance(data, list) and data:
+                        for row in data:
+                            if isinstance(row, dict):
+                                pchg = _row_pchg(row)
+                                sym = (row.get("symbol") or row.get("symbolName") or row.get("scrip") or "").strip().upper()
+                                if sym and pchg > 0:
+                                    symbols.append(sym)
+                # Fallback: try list-shaped payloads
+                if not symbols and isinstance(gainers_payload, list):
+                    for row in gainers_payload:
+                        if isinstance(row, dict):
+                            pchg = _row_pchg(row)
+                            sym = (row.get("symbol") or row.get("scrip") or "").strip().upper()
+                            if sym and pchg > 0:
+                                symbols.append(sym)
+
+                # If still empty, try preopen NIFTY data (some feeds include movers there)
+                if not symbols:
+                    preopen = ctx.get("preopen_nifty", {}) or {}
+                    pdata = preopen.get("data") if isinstance(preopen, dict) else None
+                    if isinstance(pdata, list):
+                        tmp = []
+                        for row in pdata:
+                            meta = row.get("metadata") if isinstance(row, dict) else {}
+                            sym = (meta.get("symbol") or "").strip().upper()
+                            try:
+                                pchg = float(meta.get("pChange") or 0.0)
+                            except Exception:
+                                pchg = 0.0
+                            if sym and pchg > 0:
+                                tmp.append((sym, pchg))
+                        tmp.sort(key=lambda x: x[1], reverse=True)
+                        symbols = [s for s, _ in tmp[:20]]
+
+                # Deduplicate and limit
+                symbols = list(dict.fromkeys(symbols))[:20]
+                gainers_signals = []
+                for sym in symbols:
+                    try:
+                        sig = self._analyse_symbol(sym, pcr, ctx)
+                        if sig is not None:
+                            gainers_signals.append(sig)
+                    except Exception:
+                        continue
+
+                qualified_gainers = self._engine.rank(gainers_signals, market_context=ctx)
+                top_gainers_buy = qualified_gainers[:top_n]
+                top_gainers_result = {
+                    "nifty_pct": nifty_pct,
+                    "symbols_considered": len(symbols),
+                    "scanned": len(gainers_signals),
+                    "buy_list": top_gainers_buy,
+                }
+                # Attach to market context so reporters can read it too
+                ctx["_top_gainers_analysis"] = top_gainers_result
+        except Exception as exc:
+            logger.exception("Top gainers fallback scan failed: %s", exc)
+
         return {
             "timestamp":      start_t.strftime("%Y-%m-%d %H:%M:%S"),
             "market_context": ctx,
             "all_signals":    all_signals,
             "buy_list":       buy_list,
+            # Optional: fallback analysis on top gainers when NIFTY is down
+            "top_gainers_analysis": ctx.get("_top_gainers_analysis", {}),
             "stats": {
                 "scanned":   len(all_signals),
                 "qualified": len(qualified),

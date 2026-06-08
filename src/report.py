@@ -108,6 +108,13 @@ class Reporter:
             if candidates:
                 print(_col("\n  CLOSEST CANDIDATES (below threshold):\n", C.DIM))
                 self._print_table(candidates)
+            # If a fallback top-gainers analysis was performed, show it explicitly
+            tg = result.get("top_gainers_analysis") or {}
+            if tg and tg.get("buy_list"):
+                print(_col("\n  TOP GAINERS ANALYSIS — We went through top gainers and did the same research for others:\n", C.BOLD))
+                self._print_table(tg.get("buy_list", []))
+                print()
+                self._print_detail(tg.get("buy_list", []))
         else:
             print(_col(f"\n  TOP {len(buy_list)} BUY CANDIDATES BEFORE 9:15 AM\n", C.BOLD))
             self._print_table(buy_list)
@@ -404,6 +411,15 @@ class Reporter:
             lines.append("INTRADAY TRADE CANDIDATES: None qualify (need RVOL≥2x + Supertrend Green)")
         
         lines.append("-" * 50)
+        # Plain-text fallback top-gainers summary
+        tg = result.get("top_gainers_analysis") or {}
+        if tg and tg.get("buy_list"):
+            lines.append("TOP GAINERS ANALYSIS — We went through top gainers and did the same research for others:")
+            for rank, sig in enumerate(tg.get("buy_list", []), 1):
+                st = "BULL" if sig.supertrend_dir == 1 else "BEAR"
+                lines.append(
+                    f"{rank}. {sig.symbol:<12} Score:{sig.score:>3}  Price:{sig.current_price:.2f}  RSI:{sig.rsi:.1f}  ST:{st}"
+                )
         output = "\n".join(lines)
         print(output)
         return output
@@ -432,6 +448,12 @@ class Reporter:
                 "nifty_pcr": result["market_context"].get("nifty_pcr"),
             },
             "buy_list": [s.to_dict() for s in result["buy_list"]],
+            "top_gainers_analysis": {
+                "nifty_pct": result.get("top_gainers_analysis", {}).get("nifty_pct"),
+                "symbols_considered": result.get("top_gainers_analysis", {}).get("symbols_considered"),
+                "scanned": result.get("top_gainers_analysis", {}).get("scanned"),
+                "buy_list": [s.to_dict() for s in result.get("top_gainers_analysis", {}).get("buy_list", [])],
+            },
         }
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
