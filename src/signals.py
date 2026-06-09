@@ -356,8 +356,11 @@ class SignalEngine:
             sig.add(W["macd_positive"], "MACD hist expanding positive")
 
         # EMA alignment
-        if Indicators.is_ema_bullish_aligned(row):
+        daily_ema_bull = Indicators.is_ema_bullish_aligned(row)
+        if daily_ema_bull:
             sig.add(W["ema_alignment"], "EMA stack bullish aligned")
+        # initialize MTF bullish count with daily trend
+        sig.mtf_bull_count = 1 if daily_ema_bull else 0
 
         # ADX (strict): trend must be strong and rising
         if sig.adx >= cfg.ADX_STRONG_MIN and sig.adx_rising:
@@ -394,6 +397,12 @@ class SignalEngine:
         # Volume surge (strict): RVOL must clear high-conviction floor
         if sig.vol_ratio >= cfg.RVOL_HIGH_CONVICTION:
             sig.add(W["volume_surge"], f"RVOL strong ({sig.vol_ratio:.2f}x)")
+            # extra bonus for very strong RVOL
+            try:
+                if sig.vol_ratio >= (cfg.RVOL_HIGH_CONVICTION * 1.5):
+                    sig.add(10, f"Very strong RVOL ({sig.vol_ratio:.2f}x)")
+            except Exception:
+                pass
         else:
             sig.subtract(6, f"RVOL below {cfg.RVOL_HIGH_CONVICTION:.1f}x ({sig.vol_ratio:.2f}x)")
 
@@ -422,6 +431,8 @@ class SignalEngine:
         prev_day_high = float(df["high"].iloc[-2])
         if close > prev_day_high:
             sig.add(W["prev_day_high_break"], f"Breaking prev day high ({prev_day_high:.2f})")
+            # apply explicit breakout multiplier
+            sig.add(15, "PDH breakout multiplier")
 
         # Delivery %
         if delivery_pct >= 50:
@@ -567,8 +578,19 @@ class SignalEngine:
             # 5. Relative Strength Scan (Stock vs Sector Decoupling)
             if stock_sector:
                 sector_pchg = indices.get(stock_sector, {}).get("pchg", 0.0)
+                # Gravity penalty: penalize stocks when sector bleeding unless decoupled
+                try:
+                    if sector_pchg < -1.0 and stock_pchg <= 1.0:
+                        sig.subtract(25, f"Sector gravity: {stock_sector} {sector_pchg:.1f}%")
+                except Exception:
+                    pass
+
+                # If stock decouples (strong positive divergence) elevate to high conviction
                 if sector_pchg < -1.0 and stock_pchg > 1.0:
                     sig.add(20, f"Relative Strength: Decoupling! Stock {stock_pchg:.1f}% vs {stock_sector} {sector_pchg:.1f}%")
+                    # boost conviction when accompanied by strong RVOL
+                    if sig.vol_ratio >= getattr(cfg, 'HIGH_RVOL_OVERRIDE', 3.0):
+                        sig.high_conviction = True
 
         # ── Apply Intraday Theories (Only active on Hourly Scans) ─────────────
         if intraday_df is not None and not intraday_df.empty:
@@ -588,6 +610,10 @@ class SignalEngine:
             sig.vwap_pullback_ok
         )
 
+        # ensure mtf_bull_count exists even when intraday not applied
+        if not hasattr(sig, 'mtf_bull_count'):
+            sig.mtf_bull_count = 1 if Indicators.is_ema_bullish_aligned(row) else 0
+
         sig.buy_heading = self._build_buy_heading(sig)
         sig.buy_reason_summary = " | ".join(sig.reasons[:4])
         sig.caution_summary = " | ".join(sig.warnings[:2])
@@ -602,49 +628,54 @@ class SignalEngine:
         if market_context:
             candidates = [s for s in candidates if self._passes_market_down_filters(s, market_context)]
 
-        # Enforce global positivity, EMA, RSI, and minimum liquidity (with controlled override)
+        # Enforce strict guards and apply RVOL penalty before ranking
         qualified: list[StockSignal] = []
         filtered_out: list[tuple[str, str]] = []
         for s in candidates:
-            failures: list[str] = []
-            # price momentum: above configured EMA (e.g., EMA50)
-            price_above_ema = True
+            # RSI strict ceiling (default 70) with high RVOL override
+            rsi_ceiling = getattr(cfg, 'RSI_STRICT_CEILING', getattr(cfg, 'RSI_MAX_FOR_BUY', 70))
+            rsi_override_rvol = getattr(cfg, 'HIGH_RVOL_OVERRIDE', 3.0)
+            if s.rsi is not None and s.rsi > rsi_ceiling:
+                if not (s.high_conviction and (s.vol_ratio or 0) >= rsi_override_rvol):
+                    filtered_out.append((s.symbol, f"RSI>{rsi_ceiling} ({s.rsi:.1f})"))
+                    continue
+
+            # Strict RVOL floor drop (default 1.2)
+            strict_rvol_floor = getattr(cfg, 'MIN_STRICT_RVOL', getattr(cfg, 'MIN_RVOL_TO_QUALIFY', 1.2))
+            if s.vol_ratio is None or (s.vol_ratio < strict_rvol_floor and not s.high_conviction):
+                filtered_out.append((s.symbol, f"RVOL<{strict_rvol_floor:.2f} ({s.vol_ratio}x)"))
+                continue
+
+            # EMA trend floor: price must be above EMA50 unless high conviction
+            ema_val = getattr(s, 'ema_min', None)
+            if ema_val is not None and s.current_price < float(ema_val) and not s.high_conviction:
+                filtered_out.append((s.symbol, f"below EMA{cfg.MIN_EMA_PERIOD} ({s.current_price:.2f}<{ema_val:.2f})"))
+                continue
+
+            # Score penalty for low but not disqualifying RVOL (e.g., 1.0-1.2)
             try:
-                ema_val = getattr(s, 'ema_min', None)
-                if ema_val is not None:
-                    price_above_ema = s.current_price > float(ema_val)
+                rvol_penalty_thresh = getattr(cfg, 'RVOL_PENALTY_THRESHOLD', 1.0)
+                if s.vol_ratio is not None and s.vol_ratio < rvol_penalty_thresh:
+                    s.subtract(15, f"Low liquidity penalty (RVOL<{rvol_penalty_thresh})")
             except Exception:
-                price_above_ema = True
+                pass
 
-            if not price_above_ema:
-                failures.append("below EMA")
+            # MTF confirmation requirement: penalize if fewer than 2 bullish timeframes
+            mtf_required = getattr(cfg, 'MTF_REQUIRED_COUNT', 2)
+            mtf_penalty = getattr(cfg, 'MTF_PENALTY', 20)
+            if getattr(s, 'mtf_bull_count', 0) < mtf_required and not s.high_conviction:
+                s.subtract(mtf_penalty, f"Insufficient MTF bullish confirmations ({getattr(s,'mtf_bull_count',0)})")
 
-            # RSI guard
-            if s.rsi is not None and s.rsi > cfg.RSI_MAX_FOR_BUY:
-                failures.append("RSI overbought")
-
-            # Minimum RVOL
-            if s.vol_ratio is None or s.vol_ratio < cfg.MIN_RVOL_TO_QUALIFY:
-                failures.append(f"low RVOL {s.vol_ratio}x")
-
-            # Positive move requirement
+            # Positive move requirement (allow high conviction override)
             if s.stock_pchg is None or s.stock_pchg <= 0:
-                failures.append("non-positive price move")
-
-            # Count failures and allow a single-filter override for high conviction
-            override = s.high_conviction and s.score >= cfg.HIGH_CONV_OVERRIDE_SCORE
-            if failures:
-                if override and len(failures) <= 1:
-                    logger.info("Override allowed for %s; failures=%s", s.symbol, failures)
-                else:
-                    filtered_out.append((s.symbol, ", ".join(failures)))
+                if not (s.high_conviction and s.score >= cfg.HIGH_CONV_OVERRIDE_SCORE):
+                    filtered_out.append((s.symbol, "non-positive price move"))
                     continue
 
             qualified.append(s)
 
-        if filtered_out:
-            for sym, reason in filtered_out:
-                logger.info("Filtered out %s: %s", sym, reason)
+        for sym, reason in filtered_out:
+            logger.info("Filtered out %s: %s", sym, reason)
 
         # Sort by liquidity first, then score
         qualified.sort(key=lambda x: ((x.vol_ratio or 0), x.score), reverse=True)
@@ -709,8 +740,10 @@ class SignalEngine:
             
             if trend_1h_bullish:
                 sig.add(W.get("1h_trend_aligned", 25), "MTF: 1H Trend Bullish (>20EMA)")
+                sig.mtf_bull_count = getattr(sig, 'mtf_bull_count', 0) + 1
             if vwap_15m_support:
                 sig.add(W.get("15m_vwap_support", 15), "MTF: 15M Price holding above VWAP")
+                sig.mtf_bull_count = getattr(sig, 'mtf_bull_count', 0) + 1
             if vol_breakout:
                 sig.add(W.get("5m_breakout_vol", 20), "MTF: 5M Breakout Volume Surge")
                 
