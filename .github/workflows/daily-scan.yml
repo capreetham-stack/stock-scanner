@@ -6,13 +6,10 @@ on:
     - cron: "12 4 * * 1-5"
     # 10:13 UTC = 15:43 IST, Monday-Friday (Evening follow-up off-peak)
     - cron: "13 10 * * 1-5"
-    # Hourly scans at 04:45-09:45 UTC = 10:15-15:15 IST, Monday-Friday
-    - cron: "45 4 * * 1-5"
-    - cron: "45 5 * * 1-5"
-    - cron: "45 6 * * 1-5"
-    - cron: "45 7 * * 1-5"
-    - cron: "45 8 * * 1-5"
-    - cron: "45 9 * * 1-5"
+    # Hourly scans: schedule UTC 03:45,04:45,...09:45 => IST 09:15..15:15
+    - cron: "45 3,4,5,6,7,8,9 * * 1-5"
+    # Small retry window (adjacent minute) to reduce missed runs due to queue delays
+    - cron: "46 3,4,5,6,7,8,9 * * 1-5"
   workflow_dispatch:
     inputs:
       run_type:
@@ -33,6 +30,9 @@ jobs:
   run-scan:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    concurrency:
+      group: daily-nse-scan
+      cancel-in-progress: true
 
     steps:
       - name: Checkout
@@ -104,11 +104,11 @@ jobs:
               RUN_TYPE="evening"
             elif [ "$SCHEDULE_MIN" = "12" ] && [ "$SCHEDULE_HOUR" = "4" ]; then
               RUN_TYPE="morning"
-            elif [ "$SCHEDULE_MIN" = "28" ] || ( [ "$SCHEDULE_MIN" = "45" ] && [ "$SCHEDULE_HOUR" -ge 4 ] && [ "$SCHEDULE_HOUR" -le 9 ] ); then
+            elif [ "$SCHEDULE_MIN" = "28" ] || ( [ "$SCHEDULE_MIN" = "45" ] && [ "$SCHEDULE_HOUR" -ge 3 ] && [ "$SCHEDULE_HOUR" -le 9 ] ); then
               RUN_TYPE="hourly"
             else
               # Fallback: if minute is 45 and hour falls into expected UTC market window, treat as hourly
-              if [ "$SCHEDULE_MIN" = "45" ] && [ "$SCHEDULE_HOUR" -ge 4 ] && [ "$SCHEDULE_HOUR" -le 9 ]; then
+              if [ "$SCHEDULE_MIN" = "45" ] && [ "$SCHEDULE_HOUR" -ge 3 ] && [ "$SCHEDULE_HOUR" -le 9 ]; then
                 RUN_TYPE="hourly"
               else
                 RUN_TYPE="morning"
