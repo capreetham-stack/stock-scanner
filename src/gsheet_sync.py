@@ -13,7 +13,7 @@ import datetime as dt
 from typing import Any
 
 import gspread
-from gspread.exceptions import APIError, SpreadsheetNotFound
+from gspread.exceptions import APIError, SpreadsheetNotFound, GSpreadException
 from google.oauth2.service_account import Credentials
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,39 @@ class GoogleSheetSync:
             return f"{number:+.2f}%"
         except Exception:
             return str(value)
+
+    @staticmethod
+    def _read_sheet_records(ws: gspread.Worksheet) -> list[dict[str, Any]]:
+        try:
+            return ws.get_all_records()
+        except GSpreadException as exc:
+            logger.warning("Google Sheets header parse failed, falling back to raw values: %s", exc)
+            rows = ws.get_all_values()
+            if not rows:
+                return []
+
+            header_row = None
+            for row in rows:
+                if any(str(cell).strip() for cell in row):
+                    header_row = [str(cell).strip() or f"Column{idx+1}" for idx, cell in enumerate(row)]
+                    break
+            if header_row is None:
+                return []
+
+            records: list[dict[str, Any]] = []
+            data_rows = rows[rows.index(row) + 1:]
+            for row_values in data_rows:
+                if not any(str(cell).strip() for cell in row_values):
+                    continue
+                record = {
+                    header_row[i]: row_values[i] if i < len(row_values) else ""
+                    for i in range(len(header_row))
+                }
+                records.append(record)
+            return records
+        except Exception as exc:
+            logger.warning("Unexpected error reading sheet records: %s", exc)
+            return []
 
     @classmethod
     def _format_morning_row(cls, rank: int, row: dict[str, Any]) -> dict[str, Any]:
@@ -196,7 +229,7 @@ class GoogleSheetSync:
             existing_data = []
         else:
             ws = sh.worksheet(final_title)
-            existing_data = ws.get_all_records()
+            existing_data = self._read_sheet_records(ws)
 
         # Extract previous prices and previously recommended symbols for HOURLY
         prev_prices = {}
