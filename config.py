@@ -176,6 +176,10 @@ REGIME_MULTIPLIERS = {
     }
 }
 
+# Relative Strength (RS) kill-switch: disqualify stocks below this percentile
+# Set to None to disable; otherwise value is 0-100 (e.g., 30 => disqualify bottom 30%)
+RS_MIN_PERCENTILE = 30
+
 # Mandatory kill switches / liquidity
 MIN_AVG_DAILY_VOLUME = 10000   # avg 10-day volume threshold
 

@@ -232,6 +232,26 @@ class PreMarketScanner:
                     skipped += 1
 
         # 3. Rank + filter
+        # Compute 30-day Relative Strength (chg_30d_pct) percentile across the scanned universe
+        try:
+            import pandas as _pd
+            rs_vals = {s.symbol: (s.chg_30d_pct if s.chg_30d_pct is not None else float("nan")) for s in all_signals}
+            rs_series = _pd.Series(rs_vals).dropna()
+            if not rs_series.empty:
+                rs_pct = rs_series.rank(pct=True) * 100
+                for s in all_signals:
+                    if s.symbol in rs_pct.index:
+                        s.rs_pct = float(rs_pct.loc[s.symbol])
+                        if getattr(cfg, "RS_MIN_PERCENTILE", None) is not None and s.rs_pct < cfg.RS_MIN_PERCENTILE:
+                            s.warnings.append(f"RS {s.rs_pct:.1f}th pct below threshold {cfg.RS_MIN_PERCENTILE} — disqualified")
+                            s.score = 0
+            else:
+                for s in all_signals:
+                    s.rs_pct = None
+        except Exception:
+            for s in all_signals:
+                s.rs_pct = None
+
         qualified = self._engine.rank(all_signals, market_context=ctx)
         # If top_n is provided (int), cap results; otherwise return all qualified picks
         buy_list = qualified if top_n is None else qualified[:top_n]
