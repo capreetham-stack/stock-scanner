@@ -76,18 +76,27 @@ RVOL_PENALTY_MAX       = 36
 
 # Minimum RVOL required to appear in buy list (unless high_conviction override)
 # default to the high-conviction threshold
-MIN_RVOL_TO_QUALIFY    = RVOL_HIGH_CONVICTION
+MIN_RVOL_TO_QUALIFY    = 1.0
 
 # Trend / momentum / risk guards
 MIN_EMA_PERIOD         = 50    # require price > EMA50 by default
-RSI_MAX_FOR_BUY        = 70    # avoid buying if RSI > 70 (overbought)
+RSI_MAX_FOR_BUY        = 80    # avoid buying if RSI > 80 (overbought)
 HIGH_CONV_OVERRIDE_SCORE = 70  # allow overrides at lower high-conviction score
+HIGH_SCORE_SOFT_OVERRIDE = 45  # allow soft override for high-score names with limited warnings
 
 # ─── Market-Down Safety Rules ────────────────────────────────────────────────
 MARKET_DOWN_MIN_STOCK_GAIN_PCT = 0.5  # stock must still be up at least this much when market is down
-MARKET_DOWN_MIN_RVOL          = 1.2  # require moderate relative volume on down-market picks
-MARKET_DOWN_MAX_WARNINGS      = 2    # allow one extra warning in down-market conditions
+MARKET_DOWN_MIN_RVOL          = 1.0  # allow modest volume strength on resilient up-stocks in weak markets
+MARKET_DOWN_RVOL_STRICT       = 1.25
+MARKET_DOWN_RVOL_RELAXED      = 1.15
+MARKET_DOWN_RELATIVE_STRENGTH_BONUS = 14
+MARKET_DOWN_SECTOR_DECOUPLING_BONUS = 12
+MARKET_DOWN_STRONG_RELATIVE_STRENGTH_PCT = 2.0
+MARKET_DOWN_STRONG_RVOL       = 1.4
+MARKET_DOWN_MAX_WARNINGS      = 3    # allow an extra minor warning for resilient down-market candidates
 MARKET_DOWN_SECTOR_BONUS      = 10   # extra weight for resilient sectors when market is weak
+VWAP_CHASE_PENALTY            = 3    # softer penalty for extended price above VWAP
+TEMPORARY_MIN_SCORE_TO_BUY    = 22   # active today; revert to 25 tomorrow
 
 # ─── Trend Strength (ADX) ───────────────────────────────────────────────────
 ADX_STRONG_MIN      = 20      # ADX must be above this (relaxed)
@@ -130,7 +139,7 @@ SCORE_WEIGHTS = {
     "1030_reversal":        15,
 }
 
-MIN_SCORE_TO_BUY    = 25      # lowered to allow more recommendations
+MIN_SCORE_TO_BUY    = 22      # temporarily lowered for today to surface defensive up-stocks
 TOP_N_STOCKS        = 10      # number of top picks to display
 
 # ─── Risk Management ──────────────────────────────────────────────────────────

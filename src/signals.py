@@ -398,7 +398,13 @@ class SignalEngine:
         if sig.vwap_pullback_ok:
             sig.add(W["price_above_vwap"], f"VWAP pullback entry ({vwap_dist_pct:.2f}% from VWAP)")
         elif sig.current_price > vwap_val and vwap_dist_pct >= cfg.VWAP_CHASE_PCT:
-            sig.subtract(6, f"Price extended {vwap_dist_pct:.2f}% above VWAP (chasing risk)")
+            chase_penalty = getattr(cfg, "VWAP_CHASE_PENALTY", 6)
+            if sig.stock_pchg >= 1.5 and sig.vol_ratio >= 0.9:
+                sig.subtract(max(2, chase_penalty // 2),
+                             f"Price extended {vwap_dist_pct:.2f}% above VWAP (chase watch)")
+            else:
+                sig.subtract(chase_penalty,
+                             f"Price extended {vwap_dist_pct:.2f}% above VWAP (chasing risk)")
         elif sig.current_price < vwap_val:
             sig.subtract(4, "Price below VWAP")
 
@@ -567,7 +573,10 @@ class SignalEngine:
             # 1. Market down relative strength
             if nifty_pct is not None and nifty_pct < 0:
                 if stock_pchg >= cfg.MARKET_DOWN_MIN_STOCK_GAIN_PCT:
-                    sig.add(20, f"Market down relative strength: stock up {stock_pchg:.1f}% vs NIFTY down {nifty_pct:.1f}%")
+                    bonus = cfg.MARKET_DOWN_RELATIVE_STRENGTH_BONUS
+                    if stock_pchg >= abs(nifty_pct) + 1.0:
+                        bonus += 4
+                    sig.add(bonus, f"Market down relative strength: stock up {stock_pchg:.1f}% vs NIFTY down {nifty_pct:.1f}%")
                 elif stock_pchg > 0:
                     sig.add(8, f"Market down relative strength: stock modestly up {stock_pchg:.1f}% vs NIFTY down {nifty_pct:.1f}%")
 
@@ -575,6 +584,14 @@ class SignalEngine:
             resilient_sectors = ("NIFTY IT", "NIFTY METAL")
             if stock_sector in resilient_sectors and nifty_pct is not None and nifty_pct < 0 and sig.vol_ratio >= cfg.MARKET_DOWN_MIN_RVOL:
                 sig.add(cfg.MARKET_DOWN_SECTOR_BONUS, f"Resilient sector ({stock_sector}) in weak market")
+
+            # 2a. Defensive green setups when NIFTY is down
+            if nifty_pct is not None and nifty_pct < 0 and stock_pchg > 0:
+                buy_pressure_ok = sig.buy_sell_ratio is not None and sig.buy_sell_ratio >= 1.1
+                if self._ds.is_near_demand(ds) and delivery_pct >= 50 and buy_pressure_ok:
+                    sig.add(16, "Defensive green: demand zone + high delivery + buy pressure")
+                elif self._ds.is_near_demand(ds) and buy_pressure_ok:
+                    sig.add(10, "Defensive green: demand zone + buy pressure")
 
             # 3. Capital Migration (Negative Correlation Hedge - Daily fallback)
             if stock_sector in ["NIFTY FMCG", "NIFTY PHARMA"]:
@@ -591,6 +608,9 @@ class SignalEngine:
                 sector_pchg = indices.get(stock_sector, {}).get("pchg", 0.0)
                 if sector_pchg < -1.0 and stock_pchg > 1.0:
                     sig.add(20, f"Relative Strength: Decoupling! Stock {stock_pchg:.1f}% vs {stock_sector} {sector_pchg:.1f}%")
+                if sector_pchg >= 0 and stock_pchg > cfg.MARKET_DOWN_MIN_STOCK_GAIN_PCT:
+                    sig.add(cfg.MARKET_DOWN_SECTOR_DECOUPLING_BONUS,
+                            f"Sector strength: {stock_sector} {sector_pchg:.1f}% while NIFTY down")
 
         # ── Apply Intraday Theories (Only active on Hourly Scans) ─────────────
         if intraday_df is not None and not intraday_df.empty:
@@ -740,9 +760,17 @@ class SignalEngine:
 
             # Count failures and allow a single-filter override for high conviction
             override = s.high_conviction and s.score >= cfg.HIGH_CONV_OVERRIDE_SCORE
+            soft_override = (
+                s.score >= getattr(cfg, "HIGH_SCORE_SOFT_OVERRIDE", 45) and
+                s.stock_pchg is not None and s.stock_pchg > 0 and
+                failures and
+                all(f.startswith("low RVOL") or f == "RSI overbought" for f in failures)
+            )
             if failures:
                 if override and len(failures) <= 1:
                     logger.info("Override allowed for %s; failures=%s", s.symbol, failures)
+                elif soft_override:
+                    logger.info("Soft override allowed for %s; failures=%s", s.symbol, failures)
                 else:
                     filtered_out.append((s.symbol, ", ".join(failures)))
                     continue
@@ -775,13 +803,21 @@ class SignalEngine:
 
         if sig.stock_pchg <= 0:
             return False
-        if sig.vol_ratio < cfg.MARKET_DOWN_MIN_RVOL:
-            return False
+
+        min_rvol = cfg.MARKET_DOWN_RVOL_STRICT if nifty_pct is not None and nifty_pct < -0.5 else cfg.MARKET_DOWN_RVOL_RELAXED
+        if sig.vol_ratio < min_rvol:
+            if not (
+                sig.stock_pchg >= cfg.MARKET_DOWN_STRONG_RELATIVE_STRENGTH_PCT and
+                sig.vol_ratio >= cfg.MARKET_DOWN_STRONG_RVOL and
+                sig.score >= cfg.HIGH_SCORE_SOFT_OVERRIDE
+            ):
+                return False
+
         if sig.supertrend_dir != 1:
             return False
         if sig.current_price < sig.vwap:
             return False
-        if sig.adx < cfg.ADX_STRONG_MIN:
+        if sig.adx < cfg.ADX_STRONG_MIN and not sig.high_conviction:
             return False
 
         bad_warnings = [
@@ -790,8 +826,15 @@ class SignalEngine:
         ]
         if bad_warnings:
             return False
+
         if len(sig.warnings) > cfg.MARKET_DOWN_MAX_WARNINGS:
-            return False
+            strong_rel = (
+                nifty_pct is not None and nifty_pct < 0 and
+                sig.stock_pchg >= cfg.MARKET_DOWN_STRONG_RELATIVE_STRENGTH_PCT and
+                sig.vol_ratio >= cfg.MARKET_DOWN_STRONG_RVOL
+            )
+            if not strong_rel:
+                return False
 
         return True
 
