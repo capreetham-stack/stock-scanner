@@ -104,15 +104,13 @@ jobs:
               RUN_TYPE="evening"
             elif [ "$SCHEDULE_MIN" = "12" ] && [ "$SCHEDULE_HOUR" = "4" ]; then
               RUN_TYPE="morning"
-            elif [ "$SCHEDULE_MIN" = "28" ] || ( [ "$SCHEDULE_MIN" = "45" ] && [ "$SCHEDULE_HOUR" -ge 3 ] && [ "$SCHEDULE_HOUR" -le 9 ] ); then
+            elif [ "$SCHEDULE_MIN" = "45" ] || [ "$SCHEDULE_MIN" = "46" ]; then
+              # Treat any run scheduled at minute 45 or 46 as an hourly scan.
+              # This avoids numeric comparisons on comma-separated hour fields
+              # (e.g., "3,4,5,6,7,8,9") which would fail arithmetic checks.
               RUN_TYPE="hourly"
             else
-              # Fallback: if minute is 45 and hour falls into expected UTC market window, treat as hourly
-              if [ "$SCHEDULE_MIN" = "45" ] && [ "$SCHEDULE_HOUR" -ge 3 ] && [ "$SCHEDULE_HOUR" -le 9 ]; then
-                RUN_TYPE="hourly"
-              else
-                RUN_TYPE="morning"
-              fi
+              RUN_TYPE="morning"
             fi
           else
             RUN_TYPE="${{ inputs.run_type || 'morning' }}"
