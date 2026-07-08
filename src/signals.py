@@ -37,6 +37,7 @@ import logging
 import datetime
 import numpy as np
 import pandas as pd
+import collections
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -57,6 +58,8 @@ class StockSignal:
         self.score    = 0
         self.reasons  : list[str] = []
         self.warnings : list[str] = []
+        # internal category accumulation (do not directly expose)
+        self._category_points: dict[str, list[int]] = collections.defaultdict(list)
         # price info
         self.current_price  = 0.0
         self.prev_close     = 0.0
@@ -95,12 +98,31 @@ class StockSignal:
         self.caution_summary = ""
 
     def add(self, points: int, reason: str):
-        self.score   += points
+        # Accumulate positive contribution into an inferred category.
         self.reasons.append(f"+{points} {reason}")
+        cat = self._map_reason_to_category(reason)
+        self._category_points[cat].append(int(points))
 
     def subtract(self, points: int, reason: str):
-        self.score   = max(0, self.score - points)
+        # Treat subtracts as negative contributions; store under same mapped category.
         self.warnings.append(f"-{points} {reason}")
+        cat = self._map_reason_to_category(reason)
+        self._category_points[cat].append(-int(points))
+
+    def _map_reason_to_category(self, reason: str) -> str:
+        r = reason.lower()
+        # Map textual reason to the new factor buckets: trend, momentum, volume, structure, context
+        if any(k in r for k in ("ema", "supertrend", "macd", "adx", "30d", "3m", "90d", "1h")):
+            return "trend"
+        if any(k in r for k in ("rsi", "stochastic", "bollinger", "%b", "bullish pattern", "bearish pattern", "macd crossover", "macd bullish")):
+            return "momentum"
+        if any(k in r for k in ("rvol", "volume", "breakout vol", "vpoc", "delivery")):
+            return "volume"
+        if any(k in r for k in ("demand zone", "pivot", "vwap", "support", "prev day high", "pdh", "s1", "s2", "resistance")):
+            return "structure"
+        if any(k in r for k in ("pcr", "fii", "dii", "market down", "relative strength", "sector", "capital migration")):
+            return "context"
+        return "other"
 
     def to_dict(self) -> dict:
         return {
@@ -341,7 +363,7 @@ class SignalEngine:
         else:
             sig.target = sig.entry + cfg.TARGET_RR * (sig.entry - sig.stop_loss)
 
-        # ── Scoring pass ──────────────────────────────────────────────────────
+        # ── Scoring pass (accumulate per-category; final capping applied later) ─
 
         # RSI
         if Indicators.is_rsi_oversold(sig.rsi):
@@ -391,7 +413,7 @@ class SignalEngine:
             sig.add(W["demand_zone_near"] + extra,
                     f"Near demand zone ({sig.demand_proximity:.1f}% away)")
 
-        # Volume surge (strict): RVOL must clear high-conviction floor
+        # Volume surge (RVOL)
         if sig.vol_ratio >= cfg.RVOL_HIGH_CONVICTION:
             sig.add(W["volume_surge"], f"RVOL strong ({sig.vol_ratio:.2f}x)")
         else:
@@ -573,12 +595,97 @@ class SignalEngine:
         # ── Apply Intraday Theories (Only active on Hourly Scans) ─────────────
         if intraday_df is not None and not intraday_df.empty:
             self._apply_intraday_theories(sig, daily_df, intraday_df, market_context)
-
         sig.indicator_messages["Lookback Trend (7/30/90d)"] = (
             f"{sig.chg_7d_pct:.2f}% / {sig.chg_30d_pct:.2f}% / {sig.chg_90d_pct:.2f}%"
             if None not in (sig.chg_7d_pct, sig.chg_30d_pct, sig.chg_90d_pct)
             else "Insufficient candles for full 7/30/90d trend"
         )
+
+        # Determine regime from market_context and apply regime-adaptive multipliers
+        def _detect_regime(mctx: dict) -> str:
+            try:
+                indices = mctx.get("indices", {}) if mctx else {}
+                nifty_pct = None
+                # try several keys to find NIFTY pct
+                for key in ("NIFTY", "NIFTY 50", "NIFTY 50 PR", "NIFTY 500"):
+                    val = indices.get(key)
+                    if isinstance(val, dict) and val.get("pchg") is not None:
+                        nifty_pct = float(val.get("pchg"))
+                        break
+                if nifty_pct is None:
+                    nifty_pct = mctx.get("preopen_nifty", {}).get("pchg") if mctx else None
+                if nifty_pct is None:
+                    return "choppy"
+                if nifty_pct > 0.5:
+                    return "bull"
+                if nifty_pct < -0.5:
+                    return "bear"
+                return "choppy"
+            except Exception:
+                return "choppy"
+
+        regime = _detect_regime(market_context)
+        category_caps = getattr(cfg, "CATEGORY_CAPS", {})
+        regime_multipliers = getattr(cfg, "REGIME_MULTIPLIERS", {})
+        regime_mult = regime_multipliers.get(regime, {}) if regime_multipliers else {}
+
+        # Calculate final score by capping category contributions and applying regime multipliers
+        total = 0
+        for cat, pts in sig._category_points.items():
+            pos = sum(p for p in pts if p > 0)
+            neg = sum(p for p in pts if p < 0)
+            cap = category_caps.get(cat, None)
+            if cap is not None and pos > 0:
+                capped = min(pos, cap)
+            else:
+                capped = pos
+            # apply regime multiplier for this category
+            mult = regime_mult.get(cat, 1.0)
+            total += int(capped * mult) + neg
+
+        # Enforce mandatory kill-switches: 200 DMA in bear regime and liquidity
+        try:
+            ema200_val = float(df.get(f"ema{cfg.EMA_200}", pd.Series([0])).iloc[-1]) if f"ema{cfg.EMA_200}" in df else None
+        except Exception:
+            ema200_val = None
+
+        # Kill: price below 200 EMA in a bear regime
+        if regime == "bear" and ema200_val is not None and sig.current_price < ema200_val:
+            sig.warnings.append(f"Price {sig.current_price:.2f} below EMA{cfg.EMA_200} ({ema200_val:.2f}) in bear regime — disqualified")
+            sig.score = 0
+            sig.buy_heading = "DISQUALIFIED: 200DMA"
+            sig.buy_reason_summary = ""
+            sig.caution_summary = " | ".join(sig.warnings[:2])
+            return sig
+
+        # Kill: insufficient avg 10-day volume
+        try:
+            avg10 = df['volume'].tail(10).mean()
+        except Exception:
+            avg10 = 0
+        if avg10 is not None and avg10 < getattr(cfg, 'MIN_AVG_DAILY_VOLUME', 0):
+            sig.warnings.append(f"Low liquidity: avg10_vol {avg10:.0f} below threshold {cfg.MIN_AVG_DAILY_VOLUME}")
+            sig.score = 0
+            sig.buy_heading = "DISQUALIFIED: Low liquidity"
+            sig.buy_reason_summary = ""
+            sig.caution_summary = " | ".join(sig.warnings[:2])
+            return sig
+
+        # Enforce hard R:R gate (breakout requires higher R:R)
+        rr_required = cfg.RR_STRICT_MIN
+        if sig.current_price and getattr(df, 'high', None) is not None:
+            # breakout mode stricter R:R
+            if sig.current_price > (df['high'].iloc[-2] if len(df) >= 2 else 0):
+                rr_required = getattr(cfg, 'RR_STRICT_MIN_BREAKOUT', cfg.RR_STRICT_MIN)
+        if 0 < sig.reward_risk < rr_required:
+            sig.warnings.append(f"R:R {sig.reward_risk:.2f}x below required {rr_required:.2f}x — disqualified")
+            sig.score = 0
+            sig.buy_heading = "DISQUALIFIED: R:R too low"
+            sig.buy_reason_summary = ""
+            sig.caution_summary = " | ".join(sig.warnings[:2])
+            return sig
+
+        sig.score = max(0, int(total))
 
         sig.high_conviction = bool(
             sig.adx >= cfg.ADX_STRONG_MIN and

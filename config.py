@@ -138,6 +138,56 @@ DEFAULT_RISK_PCT    = 0.5     # risk 0.5 % of capital per trade
 SL_ATR_MULT         = 1.5     # stop-loss = entry - 1.5 × ATR
 TARGET_RR           = 2.0     # minimum reward : risk ratio
 RR_STRICT_MIN       = 1.2     # relax R:R gate slightly
+RR_STRICT_MIN_BREAKOUT = 2.0  # required R:R for breakout-mode entries
+
+# Category caps to limit correlated indicator inflation
+CATEGORY_CAPS = {
+    # Revised buckets per architecture request
+    "trend": 35,        # EMA stack, Supertrend, 1H trend, 30/90d momentum
+    "momentum": 25,     # RSI, MACD, %B, candlesticks
+    "volume": 20,       # RVOL, Delivery%, Volume surge
+    "structure": 20,    # Demand zone, Pivots, VWAP, PDH
+    "context": 15,      # Market regime, Relative strength, PCR, OI
+    "other": 10,
+}
+
+# Regime multipliers (applied to category contributions)
+REGIME_MULTIPLIERS = {
+    "bull": {
+        "trend": 1.2,
+        "momentum": 1.1,
+        "volume": 1.0,
+        "structure": 0.9,
+        "context": 1.0,
+    },
+    "bear": {
+        "trend": 0.8,
+        "momentum": 0.9,
+        "volume": 1.1,
+        "structure": 1.0,
+        "context": 1.2,
+    },
+    "choppy": {
+        "trend": 0.9,
+        "momentum": 1.1,
+        "volume": 1.0,
+        "structure": 1.1,
+        "context": 1.0,
+    }
+}
+
+# Mandatory kill switches / liquidity
+MIN_AVG_DAILY_VOLUME = 10000   # avg 10-day volume threshold
+
+# Position sizing (not yet wired to execution): multiplier vs base size
+POSITION_SIZING = {
+    "25-40": 0.75,
+    "40-55": 1.5,
+    "55+": 2.0,
+}
+
+# Time decay (score loses this fraction per minute after trigger)
+SCORE_TIME_DECAY_PER_MIN = 0.004  # ~0.4% per minute (~10% in 25 minutes)
 
 # ─── Data Settings ────────────────────────────────────────────────────────────
 HISTORICAL_DAYS     = 100     # days of OHLCV to fetch
