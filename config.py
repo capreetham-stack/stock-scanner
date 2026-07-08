@@ -68,7 +68,7 @@ VWAP_CHASE_PCT      = 1.2     # above this from VWAP = chase risk
 # ─── Volume Analysis ──────────────────────────────────────────────────────────
 VOLUME_AVG_PERIOD   = 20
 VOLUME_SURGE_MULT   = 1.5     # today's vol > 1.5× avg ⇒ surge
-RVOL_HIGH_CONVICTION = 1.5    # strict RVOL floor for high-conviction entries
+RVOL_HIGH_CONVICTION = 1.2    # relaxed RVOL floor for high-conviction entries
 
 # RVOL penalty tuning (penalty = min(int((RVOL_HIGH_CONVICTION - rv) * RVOL_PENALTY_MULT), RVOL_PENALTY_MAX))
 RVOL_PENALTY_MULT      = 12
@@ -81,16 +81,16 @@ MIN_RVOL_TO_QUALIFY    = RVOL_HIGH_CONVICTION
 # Trend / momentum / risk guards
 MIN_EMA_PERIOD         = 50    # require price > EMA50 by default
 RSI_MAX_FOR_BUY        = 70    # avoid buying if RSI > 70 (overbought)
-HIGH_CONV_OVERRIDE_SCORE = 90  # minimum score to allow a 1-filter override
+HIGH_CONV_OVERRIDE_SCORE = 70  # allow overrides at lower high-conviction score
 
 # ─── Market-Down Safety Rules ────────────────────────────────────────────────
 MARKET_DOWN_MIN_STOCK_GAIN_PCT = 0.5  # stock must still be up at least this much when market is down
-MARKET_DOWN_MIN_RVOL          = 1.5  # require strong relative volume on down-market picks
-MARKET_DOWN_MAX_WARNINGS      = 1    # limit negative caution flags in down-market conditions
+MARKET_DOWN_MIN_RVOL          = 1.2  # require moderate relative volume on down-market picks
+MARKET_DOWN_MAX_WARNINGS      = 2    # allow one extra warning in down-market conditions
 MARKET_DOWN_SECTOR_BONUS      = 10   # extra weight for resilient sectors when market is weak
 
 # ─── Trend Strength (ADX) ───────────────────────────────────────────────────
-ADX_STRONG_MIN      = 25      # ADX must be above this
+ADX_STRONG_MIN      = 20      # ADX must be above this (relaxed)
 
 # ─── Demand / Supply Zone Parameters ─────────────────────────────────────────
 DS_LOOKBACK_DAYS    = 60      # candles to look back for zones
@@ -130,14 +130,14 @@ SCORE_WEIGHTS = {
     "1030_reversal":        15,
 }
 
-MIN_SCORE_TO_BUY    = 35      # only recommend stocks scoring ≥ this
+MIN_SCORE_TO_BUY    = 25      # lowered to allow more recommendations
 TOP_N_STOCKS        = 10      # number of top picks to display
 
 # ─── Risk Management ──────────────────────────────────────────────────────────
 DEFAULT_RISK_PCT    = 0.5     # risk 0.5 % of capital per trade
 SL_ATR_MULT         = 1.5     # stop-loss = entry - 1.5 × ATR
 TARGET_RR           = 2.0     # minimum reward : risk ratio
-RR_STRICT_MIN       = 1.5     # strict minimum R:R for actionable entries
+RR_STRICT_MIN       = 1.2     # relax R:R gate slightly
 
 # ─── Data Settings ────────────────────────────────────────────────────────────
 HISTORICAL_DAYS     = 100     # days of OHLCV to fetch
