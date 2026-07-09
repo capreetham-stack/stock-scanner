@@ -12,7 +12,7 @@ Usage
   python main.py --plain                # no ANSI colours (pipe/log friendly)
   python main.py --no-save              # skip CSV / JSON output
   python main.py --watchlist NIFTY50    # only scan NIFTY 50 stocks
-  python main.py --schedule             # scheduler mode: runs at 9:00 AM daily
+    python main.py --schedule             # scheduler mode: runs at 9:15 AM daily
     python main.py --sync-gsheet --gsheet-key <SHEET_KEY> --gsheet-creds <service_account.json>
 """
 
@@ -142,7 +142,7 @@ def parse_args():
                    default=os.getenv("GOOGLE_APPLICATION_CREDENTIALS", ""),
                    help="Path to Google service-account JSON credentials")
     p.add_argument("--schedule",  action="store_true",
-                   help="Scheduler mode: auto-run at 9:00 AM every weekday")
+                   help="Scheduler mode: auto-run at 9:15 AM every weekday")
     p.add_argument("--log-level", type=str, default="INFO",
                    choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                    help="Logging verbosity")

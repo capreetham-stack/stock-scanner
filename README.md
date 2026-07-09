@@ -76,7 +76,7 @@ python main.py --symbol RELIANCE
 # Plain text (no colours — pipe-friendly)
 python main.py --plain
 
-# Auto-run at 9:00 AM every weekday (scheduler mode)
+# Auto-run at 9:15 AM every weekday (scheduler mode)
 python main.py --schedule
 
 # Don't save CSV/JSON
@@ -88,7 +88,7 @@ python main.py --log-level DEBUG
 # Sync to Google Sheet (create one worksheet tab per day)
 python main.py --sync-gsheet --gsheet-key <YOUR_SHEET_KEY> --gsheet-creds <service_account.json>
 
-# Daily auto-run + Google Sheet sync at 9:00 AM (weekdays)
+# Daily auto-run + Google Sheet sync at 9:15 AM (weekdays)
 python main.py --schedule --gsheet-key <YOUR_SHEET_KEY> --gsheet-creds <service_account.json>
 ```
 
@@ -207,17 +207,17 @@ Go to the `Actions` tab and allow workflows if prompted.
 ### 4. Automatic runs
 
 - Automatically runs on every push to `main`.
-- Automatically runs Mon-Fri at `03:30 UTC` (`09:00 IST`) for morning scan.
-- Automatically runs Mon-Fri at `11:30 UTC` (`17:00 IST`) for end-of-day follow-up.
+- Automatically runs Mon-Fri at `03:45 UTC` (`09:15 IST`) for morning scan.
+- Automatically runs Mon-Fri at `10:15 UTC` (`15:45 IST`) for end-of-day follow-up.
 
 No manual workflow run is required.
 
 ### 5. Scheduled runs
 
 The workflow runs automatically Mon-Fri at:
-- `03:30 UTC` (`09:00 IST`): writes `PRE_MARKET_YYYY-MM-DD` tab.
+- `03:45 UTC` (`09:15 IST`): writes `PRE_MARKET_YYYY-MM-DD` tab.
   Legacy tabs named `PRE915_YYYY-MM-DD` are also supported.
-- `11:30 UTC` (`17:00 IST`): reads morning tab and writes:
+- `10:15 UTC` (`15:45 IST`): reads morning tab and writes:
   - `EOD_NEXTDAY_YYYY-MM-DD` (EOD performance + next-day recommendation in one tab)
 
 ### Security note
