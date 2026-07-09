@@ -13,7 +13,7 @@ import datetime as dt
 from typing import Any
 
 import gspread
-from gspread.exceptions import APIError, SpreadsheetNotFound
+from gspread.exceptions import APIError, SpreadsheetNotFound, GSpreadException
 from google.oauth2.service_account import Credentials
 
 logger = logging.getLogger(__name__)
@@ -84,6 +84,39 @@ class GoogleSheetSync:
         except Exception:
             return str(value)
 
+    @staticmethod
+    def _read_sheet_records(ws: gspread.Worksheet) -> list[dict[str, Any]]:
+        try:
+            return ws.get_all_records()
+        except GSpreadException as exc:
+            logger.warning("Google Sheets header parse failed, falling back to raw values: %s", exc)
+            rows = ws.get_all_values()
+            if not rows:
+                return []
+
+            header_row = None
+            for row in rows:
+                if any(str(cell).strip() for cell in row):
+                    header_row = [str(cell).strip() or f"Column{idx+1}" for idx, cell in enumerate(row)]
+                    break
+            if header_row is None:
+                return []
+
+            records: list[dict[str, Any]] = []
+            data_rows = rows[rows.index(row) + 1:]
+            for row_values in data_rows:
+                if not any(str(cell).strip() for cell in row_values):
+                    continue
+                record = {
+                    header_row[i]: row_values[i] if i < len(row_values) else ""
+                    for i in range(len(header_row))
+                }
+                records.append(record)
+            return records
+        except Exception as exc:
+            logger.warning("Unexpected error reading sheet records: %s", exc)
+            return []
+
     @classmethod
     def _format_morning_row(cls, rank: int, row: dict[str, Any]) -> dict[str, Any]:
         trend_summary = (
@@ -123,6 +156,62 @@ class GoogleSheetSync:
             "Warnings Detail": row.get("warnings", ""),
         }
 
+    def sync_error(self, error_data: dict[str, Any], prefix: str = "ERRORS") -> str:
+        client = self._client()
+        sh = self._open_sheet(client)
+
+        IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
+        date_title = dt.datetime.now(IST).strftime("%Y-%m-%d")
+        final_title = f"{prefix}_{date_title}"
+        existing = {ws.title for ws in sh.worksheets()}
+
+        if final_title not in existing:
+            ws = sh.add_worksheet(title=final_title, rows=100, cols=max(20, len(error_data) + 2))
+            headers = list(error_data.keys())
+            values = [[self._sheet_cell_value(error_data.get(h, "")) for h in headers]]
+            ws.update(range_name="A1", values=[headers] + values, value_input_option="RAW")
+            ws.freeze(rows=1)
+        else:
+            ws = sh.worksheet(final_title)
+            headers = list(error_data.keys())
+            values = [[self._sheet_cell_value(error_data.get(h, "")) for h in headers]]
+            ws.append_rows(values, value_input_option="RAW")
+
+        logger.info("Google Sheet error captured in worksheet '%s'", final_title)
+        return final_title
+
+    def sync_gha_logs(self, gha_text: str, prefix: str = "GHA_LOGS") -> str:
+        """Create or append to a daily GHA log worksheet and write recent lines.
+
+        Returns the worksheet title created/updated.
+        """
+        client = self._client()
+        sh = self._open_sheet(client)
+
+        IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
+        date_title = dt.datetime.now(IST).strftime("%Y-%m-%d")
+        final_title = f"{prefix}_{date_title}"
+
+        lines = [l for l in gha_text.splitlines() if l is not None]
+        # keep only recent 200 lines to avoid huge sheets
+        lines = lines[-200:]
+
+        if final_title not in {ws.title for ws in sh.worksheets()}:
+            ws = sh.add_worksheet(title=final_title, rows=max(100, len(lines) + 5), cols=1)
+            # write header + lines
+            rows = [["GitHub Actions Log (UTC/IST)"],]
+            rows.extend([[self._sheet_cell_value(l)] for l in lines])
+            ws.update(range_name="A1", values=rows, value_input_option="RAW")
+            ws.freeze(rows=1)
+        else:
+            ws = sh.worksheet(final_title)
+            # append lines
+            rows = [[self._sheet_cell_value(l)] for l in lines]
+            ws.append_rows(rows, value_input_option="RAW")
+
+        logger.info("GHA logs synced to worksheet '%s' (%d lines)", final_title, len(lines))
+        return final_title
+
     def sync_daily(self, result: dict[str, Any], prefix: str = "SCAN") -> str:
         client = self._client()
         sh = self._open_sheet(client)
@@ -140,7 +229,7 @@ class GoogleSheetSync:
             existing_data = []
         else:
             ws = sh.worksheet(final_title)
-            existing_data = ws.get_all_records()
+            existing_data = self._read_sheet_records(ws)
 
         # Extract previous prices and previously recommended symbols for HOURLY
         prev_prices = {}
@@ -278,6 +367,13 @@ class GoogleSheetSync:
             else:
                 matrix.append(["--- NO NEW RECOMMENDATIONS THIS HOUR ---"])
                 
+                # If a GitHub Actions log is present, write it to a separate daily sheet
+                gha = result.get("gh_actions_log") if isinstance(result, dict) else None
+                if gha:
+                    try:
+                        self.sync_gha_logs(str(gha))
+                    except Exception:
+                        logger.exception("Failed to sync GHA logs to separate sheet")
             ws.append_rows(matrix, value_input_option="RAW")
             logger.info("Google Sheet rows appended (Hourly Update): %d", len(old_rows_data) + len(new_rows_data))
 

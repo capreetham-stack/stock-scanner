@@ -23,8 +23,9 @@ import logging
 import argparse
 import datetime
 import glob
+import traceback
 import schedule   # pip install schedule
-from typing import Optional
+from typing import Optional, Any
 
 # ── project root on path ─────────────────────────────────────────────────────
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -173,6 +174,49 @@ def get_watchlist(choice: str) -> list[str]:
     return [s.strip().upper() for s in choice.split(",") if s.strip()]
 
 
+def get_gsheet_target_and_creds(args) -> tuple[str, str]:
+    gsheet_key = (args.gsheet_key or os.getenv("GOOGLE_SHEET_KEY", "") or
+                  get_env_value_from_file("GOOGLE_SHEET_KEY")).strip()
+    gsheet_url = (args.gsheet_url or os.getenv("GOOGLE_SHEET_URL", "") or
+                  get_env_value_from_file("GOOGLE_SHEET_URL")).strip()
+    gsheet_creds = (args.gsheet_creds or os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "") or
+                    get_env_value_from_file("GOOGLE_APPLICATION_CREDENTIALS")).strip()
+    if not gsheet_creds:
+        gsheet_creds = auto_detect_gsheet_creds().strip()
+    sheet_target = (gsheet_url or gsheet_key or "").strip()
+    return sheet_target, gsheet_creds
+
+
+def report_error_to_sheet(args, stage: str, error: Exception, tb: str) -> None:
+    sheet_target, gsheet_creds = get_gsheet_target_and_creds(args)
+    if not sheet_target:
+        logging.warning("Error sheet skipped: missing Google Sheet target")
+        return
+    if not gsheet_creds:
+        logging.warning("Error sheet skipped: missing Google Sheet credentials")
+        return
+
+    try:
+        sync = GoogleSheetSync(sheet_target, gsheet_creds)
+        error_payload = {
+            "Timestamp": datetime.datetime.now(datetime.timezone.utc).astimezone(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "Stage": stage,
+            "Run Type": args.run_type,
+            "Schedule Mode": str(bool(args.schedule)),
+            "Symbol": args.symbol or "",
+            "Watchlist": args.watchlist or "",
+            "Error Type": type(error).__name__,
+            "Error Message": str(error),
+            "Traceback": tb,
+            "GITHUB_EVENT_NAME": os.getenv("GITHUB_EVENT_NAME", ""),
+            "GITHUB_RUN_ID": os.getenv("GITHUB_RUN_ID", ""),
+        }
+        sync.sync_error(error_payload)
+        logging.info("Logged error to Google Sheet: %s", sheet_target)
+    except Exception as exc:
+        logging.exception("Failed to write error capture sheet: %s", exc)
+
+
 # ─── Single scan run ──────────────────────────────────────────────────────────
 
 def run_scan(args) -> None:
@@ -217,6 +261,17 @@ def run_scan(args) -> None:
     logging.info("Selected watchlist '%s' with %d symbols", args.watchlist, len(watchlist))
     result    = scanner.run(top_n=args.top)
 
+    # Attach GitHub Actions debug log (if present) so it can be synced to Google Sheets
+    gha_log_path = os.path.join(PROJECT_ROOT, "logs", "github-actions.log")
+    try:
+        if os.path.exists(gha_log_path):
+            with open(gha_log_path, "r", encoding="utf-8") as f:
+                result["gh_actions_log"] = f.read()
+        else:
+            result["gh_actions_log"] = ""
+    except Exception:
+        result["gh_actions_log"] = ""
+
     if args.plain:
         reporter.print_plain(result)
     else:
@@ -254,6 +309,7 @@ def run_scan(args) -> None:
                     print(f"  GoogleSheet → {ws_title}")
             except Exception as exc:
                 logging.exception("Google Sheet sync failed (%s): %s", type(exc).__name__, exc)
+                report_error_to_sheet(args, "GoogleSheetSync", exc, traceback.format_exc())
 
 
 # ─── Scheduler ────────────────────────────────────────────────────────────────
@@ -272,6 +328,10 @@ def scheduled_run(args, run_type_override=None) -> None:
         args.run_type = rtype
         try:
             run_scan(args)
+        except Exception as exc:
+            logging.exception("Scheduled scan failed: %s", exc)
+            report_error_to_sheet(args, "ScheduledRun", exc, traceback.format_exc())
+            raise
         finally:
             args.run_type = original_type
     else:
@@ -333,7 +393,12 @@ def main():
     if args.schedule:
         start_scheduler(args)
     else:
-        run_scan(args)
+        try:
+            run_scan(args)
+        except Exception as exc:
+            logging.exception("Scanner failed: %s", exc)
+            report_error_to_sheet(args, "RunScan", exc, traceback.format_exc())
+            raise
 
 
 if __name__ == "__main__":

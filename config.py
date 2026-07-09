@@ -70,6 +70,19 @@ VOLUME_AVG_PERIOD   = 20
 VOLUME_SURGE_MULT   = 1.5     # today's vol > 1.5× avg ⇒ surge
 RVOL_HIGH_CONVICTION = 1.5    # strict RVOL floor for high-conviction entries
 
+# RVOL penalty tuning (penalty = min(int((RVOL_HIGH_CONVICTION - rv) * RVOL_PENALTY_MULT), RVOL_PENALTY_MAX))
+RVOL_PENALTY_MULT      = 12
+RVOL_PENALTY_MAX       = 36
+
+# Minimum RVOL required to appear in buy list (unless high_conviction override)
+# default to the high-conviction threshold
+MIN_RVOL_TO_QUALIFY    = RVOL_HIGH_CONVICTION
+
+# Trend / momentum / risk guards
+MIN_EMA_PERIOD         = 50    # require price > EMA50 by default
+RSI_MAX_FOR_BUY        = 70    # avoid buying if RSI > 70 (overbought)
+HIGH_CONV_OVERRIDE_SCORE = 90  # minimum score to allow a 1-filter override
+
 # ─── Market-Down Safety Rules ────────────────────────────────────────────────
 MARKET_DOWN_MIN_STOCK_GAIN_PCT = 0.5  # stock must still be up at least this much when market is down
 MARKET_DOWN_MIN_RVOL          = 1.5  # require strong relative volume on down-market picks

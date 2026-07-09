@@ -146,7 +146,7 @@ class PreMarketScanner:
 
     # ── main scan ─────────────────────────────────────────────────────────────
 
-    def run(self, top_n: int = cfg.TOP_N_STOCKS) -> dict:
+    def run(self, top_n: int | None = None) -> dict:
         """
         Full pre-market scan.
 
@@ -233,7 +233,8 @@ class PreMarketScanner:
 
         # 3. Rank + filter
         qualified = self._engine.rank(all_signals, market_context=ctx)
-        buy_list = qualified[:top_n]
+        # If top_n is provided (int), cap results; otherwise return all qualified picks
+        buy_list = qualified if top_n is None else qualified[:top_n]
 
         elapsed = (datetime.datetime.now() - start_t).seconds
         logger.info("=== SCAN COMPLETE in %ds | %d scanned | %d qualifies | "

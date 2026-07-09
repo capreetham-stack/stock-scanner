@@ -219,6 +219,8 @@ class SignalEngine:
         sig.current_price  = float(row["close"])
         sig.prev_close     = float(prev_row["close"])
         sig.gap_pct        = (sig.current_price - sig.prev_close) / sig.prev_close * 100
+        # Always set stock percent change so ranking/filters can rely on it
+        sig.stock_pchg     = (sig.current_price - sig.prev_close) / sig.prev_close * 100 if sig.prev_close else 0.0
         sig.rsi            = float(row.get("rsi", 50))
         sig.macd_hist      = float(row.get("macd_hist", 0))
         sig.adx            = float(row.get("adx", 0))
@@ -257,6 +259,8 @@ class SignalEngine:
         e_short = float(row.get(f"ema{cfg.EMA_SHORT}", 0.0))
         e_mid   = float(row.get(f"ema{cfg.EMA_MID}", 0.0))
         e_long  = float(row.get(f"ema{cfg.EMA_LONG}", 0.0))
+        # expose EMA for ranking rules (e.g., EMA50)
+        sig.ema_min = float(row.get(f"ema{cfg.MIN_EMA_PERIOD}", e_long))
         if e_short > e_mid > e_long:
             ema_msg = "EMA(9/21/50): bullish alignment"
         elif e_short < e_mid < e_long:
@@ -593,9 +597,58 @@ class SignalEngine:
     def rank(self, signals: list[StockSignal], market_context: dict | None = None) -> list[StockSignal]:
         """Sort by score descending, filter by MIN_SCORE_TO_BUY, and apply market-down safety filters."""
         candidates = [s for s in signals if s.score >= cfg.MIN_SCORE_TO_BUY]
+
+        # Enforce market-aware filters
         if market_context:
             candidates = [s for s in candidates if self._passes_market_down_filters(s, market_context)]
-        return sorted(candidates, key=lambda s: s.score, reverse=True)
+
+        # Enforce global positivity, EMA, RSI, and minimum liquidity (with controlled override)
+        qualified: list[StockSignal] = []
+        filtered_out: list[tuple[str, str]] = []
+        for s in candidates:
+            failures: list[str] = []
+            # price momentum: above configured EMA (e.g., EMA50)
+            price_above_ema = True
+            try:
+                ema_val = getattr(s, 'ema_min', None)
+                if ema_val is not None:
+                    price_above_ema = s.current_price > float(ema_val)
+            except Exception:
+                price_above_ema = True
+
+            if not price_above_ema:
+                failures.append("below EMA")
+
+            # RSI guard
+            if s.rsi is not None and s.rsi > cfg.RSI_MAX_FOR_BUY:
+                failures.append("RSI overbought")
+
+            # Minimum RVOL
+            if s.vol_ratio is None or s.vol_ratio < cfg.MIN_RVOL_TO_QUALIFY:
+                failures.append(f"low RVOL {s.vol_ratio}x")
+
+            # Positive move requirement
+            if s.stock_pchg is None or s.stock_pchg <= 0:
+                failures.append("non-positive price move")
+
+            # Count failures and allow a single-filter override for high conviction
+            override = s.high_conviction and s.score >= cfg.HIGH_CONV_OVERRIDE_SCORE
+            if failures:
+                if override and len(failures) <= 1:
+                    logger.info("Override allowed for %s; failures=%s", s.symbol, failures)
+                else:
+                    filtered_out.append((s.symbol, ", ".join(failures)))
+                    continue
+
+            qualified.append(s)
+
+        if filtered_out:
+            for sym, reason in filtered_out:
+                logger.info("Filtered out %s: %s", sym, reason)
+
+        # Sort by liquidity first, then score
+        qualified.sort(key=lambda x: ((x.vol_ratio or 0), x.score), reverse=True)
+        return qualified
 
     @staticmethod
     def _find_index_pct(indices: dict, names: list[str]) -> float | None:
