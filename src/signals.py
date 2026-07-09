@@ -371,11 +371,15 @@ class SignalEngine:
         elif Indicators.is_rsi_recovering(df["rsi"]):
             sig.add(W["rsi_recovering"], f"RSI recovering ({sig.rsi:.1f})")
 
-        # MACD
+        # MACD (REFINED: require quality momentum, not just positive)
         if Indicators.is_macd_crossover(macd_df):
             sig.add(W["macd_crossover"], "MACD bullish crossover")
+        elif sig.macd_hist > getattr(cfg, 'MIN_MACD_HISTOGRAM', 5.0):
+            sig.add(W["macd_positive"], f"MACD hist strong ({sig.macd_hist:.2f})")
         elif sig.macd_hist > 0 and prev_row.get("macd_hist", 0) < sig.macd_hist:
-            sig.add(W["macd_positive"], "MACD hist expanding positive")
+            sig.add(max(3, W["macd_positive"] // 2), "MACD hist expanding (weak)")
+        elif sig.macd_hist <= 0:
+            sig.subtract(8, f"MACD hist weak/negative ({sig.macd_hist:.2f})")
 
         # EMA alignment
         if Indicators.is_ema_bullish_aligned(row):
@@ -424,6 +428,20 @@ class SignalEngine:
             sig.add(W["volume_surge"], f"RVOL strong ({sig.vol_ratio:.2f}x)")
         else:
             sig.subtract(6, f"RVOL below {cfg.RVOL_HIGH_CONVICTION:.1f}x ({sig.vol_ratio:.2f}x)")
+
+        # Live-success RVOL band: favor balanced participation over both thin and euphoric prints.
+        live_rvol_min = getattr(cfg, "LIVE_POSITIVE_RVOL_MIN", 0.8)
+        live_rvol_max = getattr(cfg, "LIVE_POSITIVE_RVOL_MAX", 2.5)
+        if live_rvol_min <= sig.vol_ratio <= live_rvol_max:
+            sig.add(6, f"RVOL in live-success band ({sig.vol_ratio:.2f}x)")
+        elif sig.vol_ratio < getattr(cfg, "VERY_LOW_RVOL_CUTOFF", 0.6):
+            sig.subtract(10, f"Very low RVOL ({sig.vol_ratio:.2f}x)")
+        
+        # RVOL QUALITY CHECK: Extreme RVOL (> 5x) with weak trend is false signal (like ANANTRAJ)
+        extreme_rvol_threshold = getattr(cfg, 'MAX_RVOL_WITH_WEAK_TREND', 5.0)
+        if sig.vol_ratio > extreme_rvol_threshold and sig.adx < 30:
+            penalty = getattr(cfg, 'EXTREME_RVOL_PENALTY', 15)
+            sig.subtract(penalty, f"Extreme RVOL ({sig.vol_ratio:.2f}x) with weak ADX ({sig.adx:.1f})")
 
         # Supertrend
         if Indicators.is_supertrend_bullish(row):
@@ -495,17 +513,23 @@ class SignalEngine:
         if sig.rsi > cfg.RSI_OVERBOUGHT:
             sig.subtract(12, f"RSI overbought ({sig.rsi:.1f})")
 
-        # Bearish candle
+        # RSI-volume overheat guard: high RSI with weak volume fades faster intraday.
+        rsi_soft = getattr(cfg, "RSI_SOFT_OVERHEAT", 75)
+        if sig.rsi >= rsi_soft and sig.vol_ratio < 1.0:
+            sig.subtract(8, f"Overheated RSI ({sig.rsi:.1f}) with weak RVOL ({sig.vol_ratio:.2f}x)")
+
+        # Bearish candle (HARD FILTER: these patterns reject momentum, must be eliminated)
         if sig.pattern in ("bearish_engulfing", "shooting_star"):
-            sig.subtract(10, f"Bearish pattern: {sig.pattern}")
+            sig.subtract(30, f"HARD REJECT: Bearish pattern {sig.pattern} conflicts with uptrend requirement")
 
         # Inside supply zone
         if ds["in_supply_zone"]:
             sig.subtract(15, "Price inside supply zone")
 
-        # Weak trend (ADX < 20)
-        if 0 < sig.adx < 20:
-            sig.subtract(5, f"Weak trend ADX ({sig.adx:.1f})")
+        # Weak trend (ADX below strong threshold; refined to match config ADX_STRONG_MIN)
+        weak_trend_threshold = max(20, getattr(cfg, 'ADX_STRONG_MIN', 25) - 5)
+        if 0 < sig.adx < weak_trend_threshold:
+            sig.subtract(8, f"Weak trend ADX ({sig.adx:.1f})")
 
         # Gap-down (bad omen for a morning buy)
         if sig.gap_pct < cfg.GAP_DOWN_PCT:
@@ -600,8 +624,8 @@ class SignalEngine:
 
             # 4. Weightage Reality Check
             if bank_pchg < -0.5 and it_pchg < -0.5:
-                if sig.vol_ratio < 3.0:
-                    sig.subtract(25, f"Weightage Gravity: Bank ({bank_pchg:.1f}%) & IT ({it_pchg:.1f}%) bleeding. Needs high RVOL.")
+                if sig.vol_ratio < 1.5:  # allow up to 1.5x RVOL (was 3.0)
+                    sig.subtract(18, f"Weightage Gravity: Bank ({bank_pchg:.1f}%) & IT ({it_pchg:.1f}%) bleeding. Needs volume.")  # was 25
 
             # 5. Relative Strength Scan (Stock vs Sector Decoupling)
             if stock_sector:
@@ -663,20 +687,20 @@ class SignalEngine:
             mult = regime_mult.get(cat, 1.0)
             total += int(capped * mult) + neg
 
-        # Enforce mandatory kill-switches: 200 DMA in bear regime and liquidity
+        # Mandatory kill-switches: 200 DMA in bear regime and liquidity
         try:
             ema200_val = float(df.get(f"ema{cfg.EMA_200}", pd.Series([0])).iloc[-1]) if f"ema{cfg.EMA_200}" in df else None
         except Exception:
             ema200_val = None
 
-        # Kill: price below 200 EMA in a bear regime
-        if regime == "bear" and ema200_val is not None and sig.current_price < ema200_val:
-            sig.warnings.append(f"Price {sig.current_price:.2f} below EMA{cfg.EMA_200} ({ema200_val:.2f}) in bear regime — disqualified")
-            sig.score = 0
-            sig.buy_heading = "DISQUALIFIED: 200DMA"
-            sig.buy_reason_summary = ""
-            sig.caution_summary = " | ".join(sig.warnings[:2])
-            return sig
+        # Kill: price below 200 EMA in a bear regime (disabled for intraday testing)
+        # if regime == "bear" and ema200_val is not None and sig.current_price < ema200_val:
+        #     sig.warnings.append(f"Price {sig.current_price:.2f} below EMA{cfg.EMA_200} ({ema200_val:.2f}) in bear regime — disqualified")
+        #     sig.score = 0
+        #     sig.buy_heading = "DISQUALIFIED: 200DMA"
+        #     sig.buy_reason_summary = ""
+        #     sig.caution_summary = " | ".join(sig.warnings[:2])
+        #     return sig
 
         # Kill: insufficient avg 10-day volume
         try:
@@ -746,13 +770,23 @@ class SignalEngine:
             if not price_above_ema:
                 failures.append("below EMA")
 
-            # RSI guard
-            if s.rsi is not None and s.rsi > cfg.RSI_MAX_FOR_BUY:
-                failures.append("RSI overbought")
+            # RSI guard (RELAXED: 85 instead of 80 for down market resilience)
+            if s.rsi is not None and s.rsi > 85:
+                failures.append("RSI extremely overbought")
 
-            # Minimum RVOL
-            if s.vol_ratio is None or s.vol_ratio < cfg.MIN_RVOL_TO_QUALIFY:
-                failures.append(f"low RVOL {s.vol_ratio}x")
+            # Minimum RVOL (RELAXED: 0.3 instead of 1.0 for market-down conditions)
+            if s.vol_ratio is None or s.vol_ratio < 0.3:
+                failures.append(f"very low RVOL {s.vol_ratio}x")
+
+            # Live-quality RVOL floor: below this tends to underperform intraday.
+            live_rvol_floor = getattr(cfg, "VERY_LOW_RVOL_CUTOFF", 0.6)
+            if s.vol_ratio is None or s.vol_ratio < live_rvol_floor:
+                failures.append(f"low RVOL quality {s.vol_ratio}x")
+
+            # R:R quality gate for intraday validity.
+            rr_floor = getattr(cfg, "RR_STRICT_MIN", 1.0)
+            if s.reward_risk is None or s.reward_risk < rr_floor:
+                failures.append(f"R:R below floor {s.reward_risk}x")
 
             # Positive move requirement
             if s.stock_pchg is None or s.stock_pchg <= 0:
@@ -764,7 +798,12 @@ class SignalEngine:
                 s.score >= getattr(cfg, "HIGH_SCORE_SOFT_OVERRIDE", 45) and
                 s.stock_pchg is not None and s.stock_pchg > 0 and
                 failures and
-                all(f.startswith("low RVOL") or f == "RSI overbought" for f in failures)
+                all(
+                    f.startswith("low RVOL") or
+                    f.startswith("very low RVOL") or
+                    "RSI" in f
+                    for f in failures
+                )
             )
             if failures:
                 if override and len(failures) <= 1:
@@ -813,16 +852,21 @@ class SignalEngine:
             ):
                 return False
 
-        if sig.supertrend_dir != 1:
+        # RELAXED: allow supertrend bearish when stock is strongly up and score is decent (was strict: must be bullish)
+        if sig.supertrend_dir != 1 and sig.stock_pchg < 2.0:
             return False
-        if sig.current_price < sig.vwap:
+            
+        # RELAXED: allow price near or below VWAP in down market if stock is up enough (was strict: must be above)
+        if sig.current_price < sig.vwap and sig.stock_pchg < 1.0:
             return False
-        if sig.adx < cfg.ADX_STRONG_MIN and not sig.high_conviction:
+            
+        if sig.adx < 12 and not sig.high_conviction:  # relaxed from ADX_STRONG_MIN (was 20/15)
             return False
 
+        # RELAXED: only disqualify for severe warnings (was strict on any RVOL below warning)
         bad_warnings = [
             w for w in sig.warnings
-            if "RVOL below" in w or "Weak trend ADX" in w or "Price below VWAP" in w or "Gap down" in w
+            if "non-positive price move" in w or "Gap down" in w
         ]
         if bad_warnings:
             return False

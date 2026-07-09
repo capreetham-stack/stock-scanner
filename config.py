@@ -68,15 +68,28 @@ VWAP_CHASE_PCT      = 1.2     # above this from VWAP = chase risk
 # ─── Volume Analysis ──────────────────────────────────────────────────────────
 VOLUME_AVG_PERIOD   = 20
 VOLUME_SURGE_MULT   = 1.5     # today's vol > 1.5× avg ⇒ surge
-RVOL_HIGH_CONVICTION = 1.2    # relaxed RVOL floor for high-conviction entries
+RVOL_HIGH_CONVICTION = 1.0    # bullish-day relaxation: include solid movers with average RVOL
 
 # RVOL penalty tuning (penalty = min(int((RVOL_HIGH_CONVICTION - rv) * RVOL_PENALTY_MULT), RVOL_PENALTY_MAX))
 RVOL_PENALTY_MULT      = 12
 RVOL_PENALTY_MAX       = 36
 
+# MACD histogram quality filter (REFINED: ATHERENERG 12.79 won, ANANTRAJ 1.59 lost)
+MIN_MACD_HISTOGRAM     = 3.0   # bullish-day relaxation: allow moderate MACD momentum
+
+# Extreme RVOL penalty: >5x with weak ADX = risky (false signal)
+MAX_RVOL_WITH_WEAK_TREND = 5.0  # if RVOL > this AND ADX < 30, penalize heavily
+EXTREME_RVOL_PENALTY   = 15    # penalty for >5x RVOL when trend is weak
+
 # Minimum RVOL required to appear in buy list (unless high_conviction override)
 # default to the high-conviction threshold
-MIN_RVOL_TO_QUALIFY    = 1.0
+MIN_RVOL_TO_QUALIFY    = 0.8
+
+# Live-performance tuned quality gates (based on hourly positive-vs-negative analysis)
+LIVE_POSITIVE_RVOL_MIN = 0.8
+LIVE_POSITIVE_RVOL_MAX = 2.5
+VERY_LOW_RVOL_CUTOFF   = 0.6
+RSI_SOFT_OVERHEAT      = 75
 
 # Trend / momentum / risk guards
 MIN_EMA_PERIOD         = 50    # require price > EMA50 by default
@@ -86,20 +99,20 @@ HIGH_SCORE_SOFT_OVERRIDE = 45  # allow soft override for high-score names with l
 
 # ─── Market-Down Safety Rules ────────────────────────────────────────────────
 MARKET_DOWN_MIN_STOCK_GAIN_PCT = 0.5  # stock must still be up at least this much when market is down
-MARKET_DOWN_MIN_RVOL          = 1.0  # allow modest volume strength on resilient up-stocks in weak markets
-MARKET_DOWN_RVOL_STRICT       = 1.25
-MARKET_DOWN_RVOL_RELAXED      = 1.15
+MARKET_DOWN_MIN_RVOL          = 0.5  # allow low RVOL on resilient stocks in weak markets (was 1.0)
+MARKET_DOWN_RVOL_STRICT       = 0.8  # relaxed RVOL gate for strong relative strength (was 1.25)
+MARKET_DOWN_RVOL_RELAXED      = 0.8  # relaxed further for exploration (was 1.15)
 MARKET_DOWN_RELATIVE_STRENGTH_BONUS = 14
 MARKET_DOWN_SECTOR_DECOUPLING_BONUS = 12
-MARKET_DOWN_STRONG_RELATIVE_STRENGTH_PCT = 2.0
-MARKET_DOWN_STRONG_RVOL       = 1.4
-MARKET_DOWN_MAX_WARNINGS      = 3    # allow an extra minor warning for resilient down-market candidates
+MARKET_DOWN_STRONG_RELATIVE_STRENGTH_PCT = 1.0  # relaxed from 2.0
+MARKET_DOWN_STRONG_RVOL       = 1.0  # relaxed from 1.4
+MARKET_DOWN_MAX_WARNINGS      = 3    # REFINED back to 3; ATHERENERG had 2 (win), ANANTRAJ had 5 (loss)
 MARKET_DOWN_SECTOR_BONUS      = 10   # extra weight for resilient sectors when market is weak
 VWAP_CHASE_PENALTY            = 3    # softer penalty for extended price above VWAP
-TEMPORARY_MIN_SCORE_TO_BUY    = 22   # active today; revert to 25 tomorrow
+TEMPORARY_MIN_SCORE_TO_BUY    = 15   # aggressive: lowered from 22 for intraday testing
 
 # ─── Trend Strength (ADX) ───────────────────────────────────────────────────
-ADX_STRONG_MIN      = 20      # ADX must be above this (relaxed)
+ADX_STRONG_MIN      = 20      # bullish-day relaxation: keep trend filter but allow moderate ADX names
 
 # ─── Demand / Supply Zone Parameters ─────────────────────────────────────────
 DS_LOOKBACK_DAYS    = 60      # candles to look back for zones
@@ -139,15 +152,15 @@ SCORE_WEIGHTS = {
     "1030_reversal":        15,
 }
 
-MIN_SCORE_TO_BUY    = 22      # temporarily lowered for today to surface defensive up-stocks
+MIN_SCORE_TO_BUY    = 18      # bullish-day relaxation to surface more qualifying names
 TOP_N_STOCKS        = 10      # number of top picks to display
 
 # ─── Risk Management ──────────────────────────────────────────────────────────
 DEFAULT_RISK_PCT    = 0.5     # risk 0.5 % of capital per trade
 SL_ATR_MULT         = 1.5     # stop-loss = entry - 1.5 × ATR
 TARGET_RR           = 2.0     # minimum reward : risk ratio
-RR_STRICT_MIN       = 1.2     # relax R:R gate slightly
-RR_STRICT_MIN_BREAKOUT = 2.0  # required R:R for breakout-mode entries
+RR_STRICT_MIN       = 1.0     # relax R:R gate further for exploratory scans
+RR_STRICT_MIN_BREAKOUT = 1.5  # required R:R for breakout-mode entries
 
 # Category caps to limit correlated indicator inflation
 CATEGORY_CAPS = {
@@ -190,7 +203,8 @@ REGIME_MULTIPLIERS = {
 RS_MIN_PERCENTILE = 30
 
 # Mandatory kill switches / liquidity
-MIN_AVG_DAILY_VOLUME = 10000   # avg 10-day volume threshold
+MIN_AVG_DAILY_VOLUME = 5000    # avg 10-day volume threshold (relaxed for exploratory scans)
+LOOSE_BEAR_200DMA = True       # allow bear-regime stocks below EMA200 when exploring signals
 
 # Position sizing (not yet wired to execution): multiplier vs base size
 POSITION_SIZING = {

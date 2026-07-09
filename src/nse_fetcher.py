@@ -12,6 +12,7 @@ Strategy
 
 from __future__ import annotations
 
+import csv
 import os
 import json
 import time
@@ -482,6 +483,26 @@ class NSEFetcher:
             self._save_cache(cache_key, res)
         return res
 
+    def _fetch_nifty500_from_archive(self) -> list[str]:
+        """Fall back to archived NSE CSV for the NIFTY500 stock list."""
+        url = "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
+        try:
+            r = requests.get(url, timeout=12, headers=_HEADERS)
+            if r.status_code != 200:
+                logger.warning("Archive NIFTY500 CSV fetch failed: HTTP %s", r.status_code)
+                return []
+            content = r.text
+            reader = csv.DictReader(content.splitlines())
+            symbols = []
+            for row in reader:
+                sym = str(row.get("Symbol", "")).strip().upper()
+                if sym and sym not in symbols:
+                    symbols.append(sym)
+            return symbols
+        except Exception as exc:
+            logger.warning("Archive NIFTY500 CSV parse failed: %s", exc)
+            return []
+
     def get_index_constituents(self, index_name: str = "NIFTY 500") -> list[str]:
         """Fetch index constituents from NSE and return clean symbol list."""
         key = f"index_constituents_{index_name.replace(' ', '_')}"
@@ -513,6 +534,12 @@ class NSEFetcher:
             data = self._nse.get("equity-stockIndices", params={"index": index_name})
 
         if not data:
+            # Try a public archived CSV fallback for NIFTY 500 constituents.
+            if index_name == "NIFTY 500":
+                symbols = self._fetch_nifty500_from_archive()
+                if symbols:
+                    self._save_cache(key, {"symbols": symbols})
+                    return symbols
             return []
 
         rows = data.get("data", []) if isinstance(data, dict) else []

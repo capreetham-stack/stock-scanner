@@ -90,7 +90,12 @@ python main.py --sync-gsheet --gsheet-key <YOUR_SHEET_KEY> --gsheet-creds <servi
 
 # Daily auto-run + Google Sheet sync at 9:15 AM (weekdays)
 python main.py --schedule --gsheet-key <YOUR_SHEET_KEY> --gsheet-creds <service_account.json>
+
+# Multi-day intraday + hourly test harness (new)
+python3 scripts/multi_day_intraday_hourly_test.py --days 1 --hours 6 --sleep-minutes 60 --watchlist NIFTY500 --workers 12
 ```
+
+Detailed runbook: `docs/INTRADAY_HOURLY_MULTI_DAY_TEST.md`
 
 ### Google Sheet setup
 

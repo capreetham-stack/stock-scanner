@@ -30,7 +30,11 @@ def get_current_price(symbol):
         tk = yf.Ticker(nse_to_yf(symbol))
         data = tk.history(period="1d")
         if not data.empty:
-            return float(data['close'].iloc[-1])
+            # yfinance columns are usually title-cased (Close), but keep a lowercase fallback.
+            if "Close" in data.columns:
+                return float(data["Close"].iloc[-1])
+            if "close" in data.columns:
+                return float(data["close"].iloc[-1])
     except Exception as e:
         print(f"  ⚠ {symbol}: price fetch failed ({e})")
     return None
@@ -54,6 +58,7 @@ def check_trade_performance(csv_file):
     losses = 0
     breakeven = 0
     results = []
+    pending = 0
 
     for _, row in df.iterrows():
         symbol = row['symbol']
@@ -64,6 +69,7 @@ def check_trade_performance(csv_file):
         current = get_current_price(symbol)
         if current is None:
             print(f"  {symbol:<10} {entry:>8.2f} {'N/A':>8} {sl:>8.2f} {target:>8.2f} {'N/A':>7} {'PENDING':>15}")
+            pending += 1
             continue
 
         pnl_pct = ((current - entry) / entry) * 100 if entry else 0
@@ -120,6 +126,7 @@ def check_trade_performance(csv_file):
     print(f"{'=' * 100}\n")
 
     # Save results
+    result_file = None
     if results:
         result_file = csv_file.replace("predictions", "results").replace(".csv", f"_{datetime.datetime.now().strftime('%H%M')}.csv")
         with open(result_file, "w", newline="") as f:
@@ -130,7 +137,16 @@ def check_trade_performance(csv_file):
             writer.writerows(results)
         print(f"  ✓ Results saved to: {result_file}")
 
-    return win_rate
+    return {
+        "csv_file": csv_file,
+        "wins": wins,
+        "losses": losses,
+        "running": breakeven,
+        "pending": pending,
+        "evaluated": total,
+        "win_rate": win_rate,
+        "result_file": result_file,
+    }
 
 
 if __name__ == "__main__":
